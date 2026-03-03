@@ -1,0 +1,15 @@
+name: Deploy to Render
+
+on:
+  push:
+    branches: [ master, main ] # Jab aap master ya main branch pe push karoge
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy Node.js Dashboard
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_NODE }}
+
+      - name: Deploy Python AI Engine
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_PYTHON }}
