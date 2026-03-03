@@ -1,44 +1,53 @@
 const express = require('express');
 const axios = require('axios');
+const path = require('path');
 const { Octokit } = require("@octokit/rest");
 const app = express();
 const octokit = new Octokit();
 
 app.use(express.json());
-const PYTHON_URL = process.env.PYTHON_URL; // Ye Render se aayega
+// Static files serve karne ke liye (index.html isi folder mein honi chahiye)
+app.use(express.static(path.join(__dirname))); 
 
+const PYTHON_URL = process.env.PYTHON_URL; // Render Environment Variable
+
+// 1. Home Route: index.html file bhejega
 app.get('/', (req, res) => {
-    res.send(`
-        <html><body style="text-align:center; padding:50px; font-family:sans-serif; background:#f4f7f6">
-            <h1>🚀 Public AI DevOps Agent</h1>
-            <input id="repo" placeholder="owner/repo (e.g. facebook/react)" style="padding:10px; width:300px;">
-            <button onclick="scan()">Scan Repo's</button>
-            <div id="out" style="margin-top:20px; font-weight:bold"></div>
-            <script>
-                async function scan() {
-                    const repo = document.getElementById('repo').value;
-                    document.getElementById('out').innerText = "🔍 AI Scanning...";
-                    const res = await fetch('/scan', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ repo })
-                    });
-                    const d = await res.json();
-                    document.getElementById('out').innerHTML = "🤖 AI Fix: " + d.explanation;
-                }
-            </script>
-        </body></html>
-    `);
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// 2. Scan Route (Purana Logic + File content fetch)
 app.post('/scan', async (req, res) => {
     try {
         const [owner, name] = req.body.repo.split('/');
+        // Saari files ki list lena
         const { data } = await octokit.repos.getContent({ owner, repo: name, path: '' });
         const files = data.map(f => f.name).join(', ');
-        const aiRes = await axios.post(`${PYTHON_URL}/fix-error`, { command: "Scan", error_log: files });
-        res.json(aiRes.data);
-    } catch (e) { res.status(500).json({ explanation: "Repo not found!" }); }
+        
+        // AI se analysis mangna
+        const aiRes = await axios.post(`${PYTHON_URL}/fix-error`, { 
+            command: "Scan", 
+            error_log: files 
+        });
+        
+        // Response mein repo details bhi bhej rahe hain taaki frontend ise use kar sake
+        res.json({ ...aiRes.data, repo: req.body.repo });
+    } catch (e) { 
+        res.status(500).json({ explanation: "Repo not found or API error!" }); 
+    }
 });
 
-app.listen(process.env.PORT || 3000);
+// 3. Apply Fix Route (Naya Logic - Python Engine ko call karega)
+app.post('/apply-fix', async (req, res) => {
+    try {
+        // Frontend se aane wala saara data Python ko bhej do
+        const aiRes = await axios.post(`${PYTHON_URL}/apply-fix`, req.body);
+        res.json(aiRes.data);
+    } catch (e) {
+        res.status(500).json({ status: "error", message: "AI Engine connection failed!" });
+    }
+});
+
+app.listen(process.env.PORT || 3000, () => {
+    console.log("Orchestrator is running on port 3000");
+});

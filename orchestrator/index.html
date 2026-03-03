@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DevOps AI Agent</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+        .card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
+        .btn-fix { background: #28a745; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 5px; }
+        .btn-install { background: #0366d6; color: white; text-decoration: none; padding: 10px; border-radius: 5px; display: inline-block; }
+    </style>
+</head>
+<body>
+    <h1>🤖 DevOps AI Agent Dashboard</h1>
+
+    <div class="card" id="connection-status">
+        <h3>1. Connect GitHub</h3>
+        <p id="status-text">Checking connection...</p>
+        <a id="install-link" href="https://github.com/apps/YOUR-APP-NAME/installations/new" class="btn-install">Connect App</a>
+    </div>
+
+    <div class="card">
+        <h3>2. Scan Repository</h3>
+        <input type="text" id="repo-input" placeholder="e.g. Akshay7836/my-app" style="width: 300px; padding: 5px;">
+        <button onclick="scanRepo()">Scan & Suggest Fix</button>
+    </div>
+
+    <div id="result-area" class="card" style="display:none;">
+        <h3>AI Suggestion:</h3>
+        <p id="explanation"></p>
+        <pre id="fix-command" style="background: #f4f4f4; padding: 10px;"></pre>
+        <button class="btn-fix" onclick="applyFix()">Apply Auto-Fix (Commit to GitHub)</button>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const instId = urlParams.get('installation_id');
+        let currentFix = null;
+
+        // URL se ID check karo
+        if (instId) {
+            document.getElementById('status-text').innerText = "✅ App Connected! (ID: " + instId + ")";
+            document.getElementById('install-link').style.display = 'none';
+        } else {
+            document.getElementById('status-text').innerText = "❌ Please connect GitHub App first.";
+        }
+
+        async function scanRepo() {
+            const repo = document.getElementById('repo-input').value;
+            // Aapka purana scanning logic jo AI Engine ko call karta hai
+            // Dummy logic for testing:
+            document.getElementById('result-area').style.display = 'block';
+            document.getElementById('explanation').innerText = "Found a bug in server.js";
+            document.getElementById('fix-command').innerText = "const express = require('express');";
+            currentFix = { repo: repo, file: "server.js", code: "const express = require('express');" };
+        }
+
+        async function applyFix() {
+            if (!instId) return alert("Pehle App connect karo!");
+
+            const res = await fetch('https://saas-ai-agent-1.onrender.com/apply-fix', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    repo_name: currentFix.repo,
+                    file_path: currentFix.file,
+                    fixed_code: currentFix.code,
+                    installation_id: parseInt(instId)
+                })
+            });
+            const data = await res.json();
+            alert(data.message || data.detail);
+        }
+    </script>
+</body>
+</html>
