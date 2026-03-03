@@ -41,28 +41,40 @@ async def fix_error(request: FixRequest):
 @app.post("/apply-fix")
 async def apply_fix(request: ApplyFixRequest):
     try:
-        # 1. App Authentication
+        print(f"DEBUG: Attempting fix for {request.repo_name}")
+        print(f"DEBUG: Installation ID: {request.installation_id}")
+        
+        # 1. Auth Check
         auth = Auth.AppAuth(GITHUB_APP_ID, GITHUB_PRIVATE_KEY)
         
-        # 2. Get GitHub instance for this SPECIFIC installation
-        # Purana 'get_installations()[0]' wala method hata kar ye use karein
-        g = Github(auth=auth.get_installation_auth(request.installation_id))
-        
-        repo = g.get_repo(request.repo_name)
-        
+        # 2. Token Check
         try:
-            # Update existing file
+            installation_auth = auth.get_installation_auth(request.installation_id)
+            g = Github(auth=installation_auth)
+            print("DEBUG: Auth Token generated successfully")
+        except Exception as auth_err:
+            print(f"❌ Auth Phase Error: {str(auth_err)}")
+            raise HTTPException(status_code=401, detail=f"Auth Failed: {str(auth_err)}")
+
+        # 3. Repo Access Check
+        repo = g.get_repo(request.repo_name)
+        print(f"DEBUG: Repo {repo.full_name} accessed")
+        
+        # 4. Commit Logic
+        try:
             contents = repo.get_contents(request.file_path)
-            repo.update_file(contents.path, "AI Auto-Fix: Updated file", request.fixed_code, contents.sha)
-            msg = f"Updated {request.file_path} successfully!"
-        except Exception:
-            # Create new file if not exists
-            repo.create_file(request.file_path, "AI Auto-Fix: Created file", request.fixed_code)
-            msg = f"Created {request.file_path} successfully!"
-            
-        return {"status": "success", "message": msg}
+            repo.update_file(contents.path, "AI Auto-Fix", request.fixed_code, contents.sha)
+            return {"status": "success", "message": "Updated successfully!"}
+        except Exception as commit_err:
+            # Agar file nahi milti toh create karega
+            repo.create_file(request.file_path, "AI Auto-Fix", request.fixed_code)
+            return {"status": "success", "message": "Created successfully!"}
+
     except Exception as e:
-        print(f"❌ Actual Commit Error: {str(e)}")
+        # Ye line ab 'None' ki jagah pura error degi
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"❌ FULL ERROR LOG:\n{error_details}")
         raise HTTPException(status_code=500, detail=f"GitHub Error: {str(e)}")
 
 if __name__ == "__main__":
