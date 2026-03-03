@@ -9,7 +9,6 @@ from github import Github, GithubIntegration
 
 app = FastAPI()
 
-# CORS allow karna taaki Frontend/Node.js se connection ho sake
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,19 +16,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Clients Setup
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 APP_ID = os.environ.get("GITHUB_APP_ID")
 PRIVATE_KEY = os.environ.get("GITHUB_PRIVATE_KEY")
 
-# --- AUTH LOGIC FOR GITHUB APP ---
 def get_github_client(installation_id: int):
-    # App ki private key se temporary access token lena
+    # Private key se token generate karna
     integration = GithubIntegration(APP_ID, PRIVATE_KEY)
     access_token = integration.get_access_token(installation_id).token
     return Github(access_token)
 
-# --- MODELS ---
 class ErrorRequest(BaseModel):
     command: str
     error_log: str
@@ -40,10 +36,9 @@ class FixRequest(BaseModel):
     fixed_code: str
     installation_id: int
 
-# --- 1. SCAN/ANALYZE ENDPOINT (Aapka Purana Logic) ---
 @app.post("/fix-error")
 async def fix_error(request: ErrorRequest):
-    prompt = f"Analyze these GitHub files: {request.error_log}. What is missing? Give a fix command in JSON with 'explanation' and 'fix_command' keys."
+    prompt = f"Analyze these GitHub files: {request.error_log}. What is missing? Give a fix command in JSON with 'explanation' and 'fix_command' keys. If a file is missing, provide only the file content in 'fix_command'."
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
@@ -51,24 +46,38 @@ async def fix_error(request: ErrorRequest):
     )
     return json.loads(completion.choices[0].message.content)
 
-# --- 2. AUTO-COMMIT ENDPOINT (Naya Logic) ---
 @app.post("/apply-fix")
 async def apply_fix(data: FixRequest):
     try:
-        # User ki installation ID use karke GitHub client banana
         g = get_github_client(data.installation_id)
         repo = g.get_repo(data.repo_name)
-        contents = repo.get_contents(data.file_path)
+        
+        # AI kabhi-kabhi "touch README.md" bhejta hai, use saaf karna
+        clean_code = data.fixed_code.replace("touch README.md", "").strip()
 
-        # File ko update (commit) karna
-        repo.update_file(
-            path=data.file_path,
-            message="🤖 AI Fix: Applied by DevOps-Pulse AI",
-            content=data.fixed_code,
-            sha=contents.sha
-        )
-        return {"status": "success", "message": f"Fixed {data.file_path} successfully!"}
+        try:
+            # 1. Check if file exists to UPDATE
+            contents = repo.get_contents(data.file_path)
+            repo.update_file(
+                path=data.file_path,
+                message="🤖 AI Fix: Updated by DevOps AI",
+                content=clean_code,
+                sha=contents.sha
+            )
+            return {"status": "success", "message": f"Updated {data.file_path} successfully!"}
+            
+        except Exception:
+            # 2. If file not found (404), CREATE it
+            repo.create_file(
+                path=data.file_path,
+                message="🤖 AI Fix: Created missing file",
+                content=clean_code,
+                branch="main" 
+            )
+            return {"status": "success", "message": f"Created {data.file_path} successfully!"}
+            
     except Exception as e:
+        # Pura error message return karna debugging ke liye
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
