@@ -12,7 +12,7 @@ app.get('/', (req, res) => {
         <html><body style="text-align:center; padding:50px; font-family:sans-serif; background:#f4f7f6">
             <h1>🚀 Public AI DevOps Agent</h1>
             <input id="repo" placeholder="owner/repo (e.g. facebook/react)" style="padding:10px; width:300px;">
-            <button onclick="scan()">Scan Repo</button>
+            <button onclick="scan()">Scan Repo's</button>
             <div id="out" style="margin-top:20px; font-weight:bold"></div>
             <script>
                 async function scan() {
