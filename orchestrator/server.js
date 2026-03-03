@@ -4,76 +4,56 @@ const path = require('path');
 const { Octokit } = require("@octokit/rest");
 const app = express();
 
-// Octokit ko bina auth ke initialize kar rahe hain kyunki private operations Python Engine karega
-const octokit = new Octokit();
+// Render Environment Variables se Token uthana
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const PYTHON_URL = process.env.PYTHON_URL?.replace(/\/$/, ""); // Aakhiri slash hatane ke liye
 
 app.use(express.json());
-
-// 1. Static Files Setup: Taaki index.html sahi se load ho
 app.use(express.static(path.join(__dirname))); 
 
-const PYTHON_URL = process.env.PYTHON_URL; // Render Environment Variable
-
-// 2. Home Route: Dashboard dikhane ke liye
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 3. Scan Route: Repo ki files check karke AI ko bhejta hai
+// Scan Logic: GitHub se files lekar AI ko bhejna
 app.post('/scan', async (req, res) => {
-    console.log("🔍 Scanning repo:", req.body.repo);
-    try {
-        const repoInput = req.body.repo;
-        if (!repoInput.includes('/')) {
-            return res.status(400).json({ explanation: "Please use 'owner/repo' format." });
-        }
+    const repoInput = req.body.repo;
+    console.log("🔍 Scanning:", repoInput);
 
+    if (!repoInput || !repoInput.includes('/')) {
+        return res.status(400).json({ explanation: "Format 'owner/repo' hona chahiye!" });
+    }
+
+    try {
         const [owner, name] = repoInput.split('/');
         
-        // GitHub API se file list uthana
+        // GitHub API call
         const { data } = await octokit.repos.getContent({ owner, repo: name, path: '' });
         const files = data.map(f => f.name).join(', ');
         
-        // Python AI Engine ko analysis ke liye bhejna
+        // Python Engine call
         const aiRes = await axios.post(`${PYTHON_URL}/fix-error`, { 
             command: "Scan", 
             error_log: files 
         });
         
-        // AI response + repo info frontend ko wapas dena
-        res.json({ 
-            explanation: aiRes.data.explanation,
-            fix_command: aiRes.data.fix_command,
-            repo: repoInput 
-        });
-
+        res.json({ ...aiRes.data, repo: repoInput });
     } catch (e) { 
-        console.error("❌ Scan Error:", e.message);
-        res.status(500).json({ explanation: "Repo not found or private! Check the name." }); 
+        console.error("❌ Scan Error:", e.response?.data || e.message);
+        res.status(500).json({ explanation: "GitHub Error: Check if repo is public and GITHUB_TOKEN is valid." }); 
     }
 });
 
-// 4. Apply Fix Route: Frontend se aane wale data ko Python Engine (Commit logic) tak pahunchana
+// Apply Fix: AI suggestion ko GitHub par commit karna
 app.post('/apply-fix', async (req, res) => {
-    console.log("🚀 Applying fix for:", req.body.repo_name);
     try {
-        // Python Engine (`main.py`) ko call karna
         const aiRes = await axios.post(`${PYTHON_URL}/apply-fix`, req.body);
-        
-        // Python se aane wala success/error response wapas bhejna
         res.json(aiRes.data);
     } catch (e) {
-        console.error("❌ Fix Error:", e.message);
-        res.status(500).json({ 
-            status: "error", 
-            message: "AI Engine (Python) se connection nahi ho paya!" 
-        });
+        console.error("❌ Apply Fix Error:", e.response?.data || e.message);
+        res.status(500).json({ status: "error", message: "AI Engine connection failed!" });
     }
 });
 
-// Server Start
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`✅ Orchestrator running on port ${PORT}`);
-    console.log(`🔗 Python Engine URL: ${PYTHON_URL}`);
-});
+app.listen(PORT, () => console.log(`🚀 Node Server ready on port ${PORT}`));
