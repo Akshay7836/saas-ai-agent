@@ -2,17 +2,12 @@
 # import traceback
 # from fastapi import FastAPI, HTTPException
 # from pydantic import BaseModel
-# from github import Github, Auth
 # from groq import Groq
 
 # app = FastAPI()
 
-# # 1. Configuration with safe defaults
+# # Configuration
 # GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# GITHUB_APP_ID = os.getenv("GITHUB_APP_ID")
-# # Render newline fix: standard procedure for private keys on PaaS
-# GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY", "").replace('\\n', '\n').strip()
-
 # client = Groq(api_key=GROQ_API_KEY)
 
 # class FixRequest(BaseModel):
@@ -22,14 +17,14 @@
 # class ApplyFixRequest(BaseModel):
 #     repo_name: str
 #     file_path: str
-#     fixed_code: str
 #     installation_id: int
+#     # Note: 'fixed_code' ab request se nahi, AI se aayega
 
 # @app.get("/")
 # def home():
 #     return {"status": "AI Engine is running"}
 
-# # 🚀 API 1: AI Analysis
+# # 🚀 API 1: AI Analysis (Same logic)
 # @app.post("/fix-error")
 # async def fix_error(request: FixRequest):
 #     try:
@@ -43,56 +38,43 @@
 #         print(f"❌ Groq Error: {repr(e)}")
 #         raise HTTPException(status_code=500, detail=f"AI Error: {repr(e)}")
 
-# # 🛠️ API 2: GitHub Commit Logic
+# # 🛠️ API 2: NEW Logic - Generate Code only
 # @app.post("/apply-fix")
 # async def apply_fix(request: ApplyFixRequest):
 #     try:
-#         print(f"DEBUG: Starting fix for {request.repo_name} (ID: {request.installation_id})")
+#         print(f"🤖 Generating fix for {request.file_path}...")
         
-#         # 1. Initialize App Auth
-#         app_auth = Auth.AppAuth(GITHUB_APP_ID, GITHUB_PRIVATE_KEY)
+#         # Humein ab AI se actual code mangwana hai
+#         prompt = f"""
+#         Task: Fix or Optimize the code for the file: {request.file_path}.
+#         Context: The user wants to improve logical handling and code quality.
+#         Requirement: Return ONLY the code. No markdown, no explanations.
+#         """
         
-#         # 2. Get Installation-specific Token
-#         # This is the most stable way to get a token for a specific user installation
-#         try:
-#             token = app_auth.get_installation_auth(request.installation_id)
-#             g = Github(auth=token)
-#             print("DEBUG: GitHub Installation Token acquired")
-#         except Exception as auth_err:
-#             print(f"❌ Auth Phase Error: {repr(auth_err)}")
-#             raise HTTPException(status_code=401, detail=f"GitHub Auth Failed: {repr(auth_err)}")
+#         chat_completion = client.chat.completions.create(
+#             messages=[{"role": "user", "content": prompt}],
+#             model="llama-3.3-70b-versatile",
+#         )
+        
+#         fixed_code = chat_completion.choices[0].message.content
+        
+#         # Cleaner code extraction (Removing ``` if AI includes them)
+#         if "```" in fixed_code:
+#             fixed_code = fixed_code.split("```")[1]
+#             if fixed_code.startswith("python") or fixed_code.startswith("javascript"):
+#                 fixed_code = "\n".join(fixed_code.split("\n")[1:])
 
-#         # 3. Access Repository
-#         repo = g.get_repo(request.repo_name)
-        
-#         # 4. Commit Changes
-#         try:
-#             # Check if file exists to update
-#             contents = repo.get_contents(request.file_path)
-#             repo.update_file(
-#                 path=contents.path,
-#                 message="AI Auto-Fix: Improvement applied",
-#                 content=request.fixed_code,
-#                 sha=contents.sha
-#             )
-#             return {"status": "success", "message": f"Successfully updated {request.file_path}"}
-#         except Exception:
-#             # If file doesn't exist, create it
-#             repo.create_file(
-#                 path=request.file_path,
-#                 message="AI Auto-Fix: File created",
-#                 content=request.fixed_code
-#             )
-#             return {"status": "success", "message": f"Successfully created {request.file_path}"}
+#         # Commit ka kaam ab server.js karega, hum sirf code bhej rahe hain
+#         return {
+#             "status": "success",
+#             "fixed_code": fixed_code.strip(),
+#             "explanation": "AI generated code successfully"
+#         }
 
 #     except Exception as e:
-#         # Capture full traceback for Render logs
 #         error_trace = traceback.format_exc()
-#         print(f"❌ FULL ERROR LOG:\n{error_trace}")
-        
-#         # Ensure detail is never empty/None to avoid frontend confusion
-#         error_msg = str(e) if str(e).strip() else repr(e)
-#         raise HTTPException(status_code=500, detail=f"GitHub Error: {error_msg}")
+#         print(f"❌ AI GENERATION ERROR:\n{error_trace}")
+#         raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")
 
 # if __name__ == "__main__":
 #     import uvicorn
@@ -100,11 +82,10 @@
 
 
 
-
-
 import os
 import traceback
-from fastapi import FastAPI, HTTPException
+import json
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from groq import Groq
 
@@ -114,45 +95,60 @@ app = FastAPI()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
-class FixRequest(BaseModel):
-    command: str
-    error_log: str
+class AnalyzeRequest(BaseModel):
+    files_context: str
 
 class ApplyFixRequest(BaseModel):
     repo_name: str
     file_path: str
     installation_id: int
-    # Note: 'fixed_code' ab request se nahi, AI se aayega
+    original_code: str = ""  # New: Hum ab original code bhejenge server.js se
 
 @app.get("/")
 def home():
-    return {"status": "AI Engine is running"}
+    return {"status": "AI Agent Engine is running"}
 
-# 🚀 API 1: AI Analysis (Same logic)
-@app.post("/fix-error")
-async def fix_error(request: FixRequest):
+# 🚀 API 1: Analyze & Detect Bug (The Detective)
+@app.post("/analyze-repo")
+async def analyze_repo(request: AnalyzeRequest):
     try:
-        prompt = f"Analyze these files: {request.error_log}. Provide a short explanation of what's missing and how to improve it."
+        prompt = f"""
+        You are a Senior Software Architect. Scan this list of files in a repository:
+        {request.files_context}
+
+        Task: Identify ONE critical file that needs improvement, bug fixing, or optimization.
+        Return ONLY a JSON response (no markdown, no text):
+        {{
+            "target_file": "path/to/file.js",
+            "reason": "Explain why this file needs attention",
+            "action": "What improvement should be made"
+        }}
+        """
+        
         chat_completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
+            response_format={"type": "json_object"} # Groq supports JSON mode
         )
-        return {"explanation": chat_completion.choices[0].message.content}
+        
+        return json.loads(chat_completion.choices[0].message.content)
     except Exception as e:
-        print(f"❌ Groq Error: {repr(e)}")
-        raise HTTPException(status_code=500, detail=f"AI Error: {repr(e)}")
+        print(f"❌ Analysis Error: {repr(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# 🛠️ API 2: NEW Logic - Generate Code only
+# 🛠️ API 2: Dynamic Code Generation (The Mechanic)
 @app.post("/apply-fix")
 async def apply_fix(request: ApplyFixRequest):
     try:
-        print(f"🤖 Generating fix for {request.file_path}...")
+        print(f"🤖 Fixing: {request.file_path}...")
         
-        # Humein ab AI se actual code mangwana hai
         prompt = f"""
-        Task: Fix or Optimize the code for the file: {request.file_path}.
-        Context: The user wants to improve logical handling and code quality.
-        Requirement: Return ONLY the code. No markdown, no explanations.
+        File: {request.file_path}
+        Original Code:
+        {request.original_code}
+
+        Task: Improve this code. Fix bugs, add error handling, or optimize logic.
+        Requirement: Return ONLY the code. No markdown code blocks (```), no explanations.
         """
         
         chat_completion = client.chat.completions.create(
@@ -161,24 +157,27 @@ async def apply_fix(request: ApplyFixRequest):
         )
         
         fixed_code = chat_completion.choices[0].message.content
-        
-        # Cleaner code extraction (Removing ``` if AI includes them)
-        if "```" in fixed_code:
-            fixed_code = fixed_code.split("```")[1]
-            if fixed_code.startswith("python") or fixed_code.startswith("javascript"):
-                fixed_code = "\n".join(fixed_code.split("\n")[1:])
 
-        # Commit ka kaam ab server.js karega, hum sirf code bhej rahe hain
+        # Cleaner code extraction logic
+        if "```" in fixed_code:
+            parts = fixed_code.split("```")
+            # Usually the code is in the second part if the AI uses blocks
+            fixed_code = parts[1]
+            if "\n" in fixed_code:
+                # Remove the language name (e.g., 'javascript') if it exists
+                first_line = fixed_code.split("\n")[0].strip().lower()
+                if first_line in ["javascript", "python", "node", "js", "py"]:
+                    fixed_code = "\n".join(fixed_code.split("\n")[1:])
+
         return {
             "status": "success",
             "fixed_code": fixed_code.strip(),
-            "explanation": "AI generated code successfully"
+            "summary": f"AI optimized {request.file_path} for better stability."
         }
 
     except Exception as e:
-        error_trace = traceback.format_exc()
-        print(f"❌ AI GENERATION ERROR:\n{error_trace}")
-        raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")
+        print(f"❌ AI Fix Error: {repr(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
