@@ -69,59 +69,69 @@
 // });
 
 
-
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
 const { Octokit } = require("@octokit/rest");
+const { createAppAuth } = require("@octokit/auth-app"); // Auth library
+
 const app = express();
 
-// 1. GitHub Token for Public Scans
-const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-
-// 2. Python Engine URL Safety
+// 1. GitHub App Configuration (Fetching from your Render Env)
+const GITHUB_APP_ID = process.env.GITHUB_APP_ID;
+const GITHUB_PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n'); 
 const PYTHON_URL = process.env.PYTHON_URL?.replace(/\/$/, ""); 
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname))); 
+app.use(express.static(path.join(__dirname)));
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+// 🛠️ Function: Create Auth for specific User Installation
+async function getInstallationOctokit(installationId) {
+    return new Octokit({
+        authStrategy: createAppAuth,
+        auth: {
+            appId: GITHUB_APP_ID,
+            privateKey: GITHUB_PRIVATE_KEY,
+            installationId: installationId,
+        },
+    });
+}
 
-// 🚀 API 1: Scan Repository
+// 🚀 API 1: Scan (Public or App-based)
 app.post('/scan', async (req, res) => {
-    const { repo } = req.body;
-    if (!repo || !repo.includes('/')) {
-        return res.status(400).json({ explanation: "Invalid format. Use 'owner/repo'." });
-    }
-
     try {
+        const { repo, installation_id } = req.body;
         const [owner, name] = repo.split('/');
-        const { data } = await octokit.repos.getContent({ owner, repo: name, path: '' });
+        
+        // Agar installation_id hai, toh authenticated octokit use karo
+        const scanOctokit = installation_id ? await getInstallationOctokit(installation_id) : new Octokit();
+
+        const { data } = await scanOctokit.repos.getContent({ owner, repo: name, path: '' });
         const fileNames = data.map(f => f.name).join(', ');
 
         const aiRes = await axios.post(`${PYTHON_URL}/fix-error`, { 
             command: "Scan", 
-            error_log: `Files found: ${fileNames}. Suggest a README or improvements.` 
+            error_log: `Files: ${fileNames}. Suggest README.` 
         });
 
         res.json({ ...aiRes.data, repo });
     } catch (e) {
-        console.error("❌ Scan Error:", e.message);
-        res.status(500).json({ explanation: "Repo not accessible or GitHub API limit hit." });
+        res.status(500).json({ explanation: "Access Denied. Is the App installed on this repo?" });
     }
 });
 
-// 🛠️ API 2: Final Sync with Python AI Engine
+// 🛠️ API 2: Apply Fix (Pure Production Logic)
 app.post('/apply-fix', async (req, res) => {
     try {
         const { repo, file_path, installation_id } = req.body;
         const [owner, name] = repo.split('/');
 
-        console.log(`🤖 Requesting fix from AI Engine for: ${file_path}`);
-        
-        // 1. Get Fix from Python Engine (Mapping repo to repo_name for Python sync)
+        if (!installation_id) throw new Error("Installation ID missing!");
+
+        // 🟢 AUTH: Dynamic Token for this specific User
+        const userOctokit = await getInstallationOctokit(installation_id);
+
+        // AI Generation
         const aiRes = await axios.post(`${PYTHON_URL}/apply-fix`, {
             repo_name: repo,
             file_path: file_path,
@@ -129,68 +139,45 @@ app.post('/apply-fix', async (req, res) => {
         });
         
         const { fixed_code, summary } = aiRes.data; 
-
-        // 2. Create Unique Branch Name
         const newBranch = `ai-fix-${Date.now()}`;
 
-        // 3. Get Main Branch SHA
-        const { data: mainRef } = await octokit.git.getRef({
-            owner, repo: name, ref: 'heads/main'
-        });
-
-        // 4. Create New Branch
-        await octokit.git.createRef({
+        // Git Workflow
+        const { data: mainRef } = await userOctokit.git.getRef({ owner, repo: name, ref: 'heads/main' });
+        await userOctokit.git.createRef({
             owner, repo: name,
             ref: `refs/heads/${newBranch}`,
             sha: mainRef.object.sha
         });
 
-        // 5. Get File SHA (Try-Catch in case file doesn't exist yet)
         let fileSha;
         try {
-            const { data: fileData } = await octokit.repos.getContent({
-                owner, repo: name, path: file_path, ref: 'main'
-            });
+            const { data: fileData } = await userOctokit.repos.getContent({ owner, repo: name, path: file_path, ref: 'main' });
             fileSha = fileData.sha;
-        } catch (err) {
-            console.log("File not found on main, creating fresh file.");
-        }
+        } catch (e) { /* New file */ }
 
-        // 6. Push Fix to New Branch
-        await octokit.repos.createOrUpdateFileContents({
+        await userOctokit.repos.createOrUpdateFileContents({
             owner, repo: name,
             path: file_path,
-            message: `🤖 AI Fix: Optimized ${file_path}`,
+            message: `🤖 AI Fix: ${file_path}`,
             content: Buffer.from(fixed_code).toString('base64'),
             branch: newBranch,
-            sha: fileSha // Will be undefined for new files
+            sha: fileSha
         });
 
-        // 7. Create Pull Request with AI Summary
-        const pr = await octokit.pulls.create({
+        const pr = await userOctokit.pulls.create({
             owner, repo: name,
-            title: `🛠️ AI Suggestion: Fix for ${file_path}`,
+            title: `🛠️ AI Fix for ${file_path}`,
             head: newBranch,
             base: 'main',
-            body: summary || "AI generated logical optimizations and improvements."
+            body: summary
         });
 
-        res.json({ 
-            status: "success", 
-            message: "PR created successfully!", 
-            pr_url: pr.data.html_url 
-        });
+        res.json({ status: "success", pr_url: pr.data.html_url });
 
     } catch (e) {
-        console.error("❌ PR Workflow Error:", e.response?.data || e.message);
-        res.status(500).json({ 
-            status: "error", 
-            message: e.response?.data?.detail || "Failed to create PR. Please check logs." 
-        });
+        console.error("❌ Production Error:", e.message);
+        res.status(500).json({ status: "error", message: "403 Forbidden: Check App Permissions in GitHub Settings." });
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`✅ SaaS Orchestrator Live with PR Workflow on Port ${PORT}`);
-});
+app.listen(process.env.PORT || 3000);
