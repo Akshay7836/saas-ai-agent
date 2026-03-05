@@ -1,12 +1,19 @@
 import os
 import json
 import traceback
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from groq import Groq
 
 app = FastAPI()
+
+# 🔑 Groq Client setup
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+@app.get("/")
+def home():
+    return {"status": "AI Agent Brain is Online and Listening"}
 
 # 🚀 API 1: Deep Repo Analysis
 @app.post("/analyze-repo")
@@ -82,7 +89,17 @@ async def apply_fix(request: Request):
             "summary": f"Successfully healed {file_path}"
         }
     except Exception as e:
+        print(f"Fix Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/fix-error")
-async def fix_error(): return {"explanation": "Agent Online"}
+async def fix_error(): 
+    return {"explanation": "Agent Online"}
+
+# 🛡️ RENDER PORT BINDING LOGIC
+# Ye part Render ke 'Port scan timeout' ko fix karega
+if __name__ == "__main__":
+    # Render automatically sets 'PORT' environment variable
+    port = int(os.environ.get("PORT", 8000))
+    # '0.0.0.0' is mandatory to receive external traffic on Render
+    uvicorn.run(app, host="0.0.0.0", port=port)
