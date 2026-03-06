@@ -3,5 +3,5 @@ uvicorn
 groq
 pydantic>=2.0.0
 python-multipart
-chromadb
+chromadb==0.4.24
 sentence-transformers
