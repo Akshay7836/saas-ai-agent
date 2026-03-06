@@ -12,27 +12,34 @@ app = FastAPI()
 # 🔑 AI Setup
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# 📂 RAG Engine Setup
-# Using chromadb.Client() for in-memory (Standard Render setup)
-# Note: For production, consider chromadb.PersistentClient(path="./chroma_db")
-chroma_client = chromadb.Client()
+# 📂 RAG Engine Setup (Optimized for 512MB RAM)
+# Using EphemeralClient instead of default Client to save background overhead
+chroma_client = chromadb.EphemeralClient() 
+
 collection = chroma_client.get_or_create_collection(name="repo_code")
-# Lightweight model to convert code into vectors
-embed_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# 🧠 CHANGE: Switched to an even lighter model 'paraphrase-albert-small-v2'
+# This model is roughly 40MB vs 100MB+ for MiniLM, saving critical RAM.
+# device='cpu' ensures it doesn't look for non-existent GPU resources.
+embed_model = SentenceTransformer('paraphrase-albert-small-v2', device='cpu')
 
 @app.get("/")
 def home():
-    return {"status": "AI Agent Brain is Online with RAG Memory"}
+    return {"status": "AI Agent Brain is Online with Optimized Memory"}
 
 # 🧠 API 1: Indexing Phase
-# This stores the repo content so the AI can "search" it later
 @app.post("/index-repo")
 async def index_repo(request: Request):
     try:
         data = await request.json()
-        files_dict = data.get("files", {}) # Expecting {"path": "content"}
+        files_dict = data.get("files", {}) 
         
+        # Batch processing to prevent memory spikes
         for path, content in files_dict.items():
+            # Only index files that are small enough to process
+            if len(content) > 20000: # Skip massive log/data files
+                continue
+                
             embedding = embed_model.encode(content).tolist()
             collection.add(
                 embeddings=[embedding],
@@ -52,12 +59,12 @@ async def analyze_repo(request: Request):
         data = await request.json()
         file_list = data.get("files_context", "")
 
-        # 🔍 RAG Step: Find code related to structural/connection issues
         query = "Find HTML buttons, event listeners, and JS function definitions."
         query_embedding = embed_model.encode(query).tolist()
-        results = collection.query(query_embeddings=[query_embedding], n_results=5)
         
-        # Combine retrieved snippets for context
+        # Reduced n_results from 5 to 3 to keep the Groq prompt size smaller
+        results = collection.query(query_embeddings=[query_embedding], n_results=3)
+        
         retrieved_context = "\n---\n".join(results['documents'][0])
 
         prompt = f"""
@@ -66,9 +73,7 @@ async def analyze_repo(request: Request):
         Additional Code Context:
         {retrieved_context}
 
-        Task: Act as a Lead Developer. Identify ALL critical issues (bugs, missing UI-to-Logic connections, or performance bottlenecks).
-        Specifically, check if HTML buttons call functions that don't exist, or if functions are defined but never used.
-
+        Task: Identify ALL critical issues. Specifically check if HTML buttons call non-existent functions.
         Return ONLY a JSON object:
         {{
             "issues": [
@@ -111,13 +116,13 @@ async def apply_fix(request: Request):
         )
         fixed_code = chat.choices[0].message.content.strip()
 
-        # Final cleanup for raw code delivery
         if "```" in fixed_code:
-            fixed_code = fixed_code.split("```")[1]
-            if "\n" in fixed_code:
+            parts = fixed_code.split("```")
+            fixed_code = parts[1] if len(parts) > 1 else parts[0]
+            if fixed_code.startswith(("javascript", "python", "html", "css", "json")):
                 fixed_code = "\n".join(fixed_code.split("\n")[1:])
 
-        return {"fixed_code": fixed_code, "summary": f"Successfully healed {file_path}"}
+        return {"fixed_code": fixed_code.strip(), "summary": f"Successfully healed {file_path}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
