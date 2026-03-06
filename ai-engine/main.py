@@ -1,105 +1,111 @@
 import os
-import json
-import traceback
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+import re
+import requests
+import base64
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel, Field
 from groq import Groq
+from typing import Optional
 
-app = FastAPI()
+app = FastAPI(title="Minion SRE SaaS")
 
-# 🔑 Groq Client setup
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# --- 1. MODELS ---
+class InvestigationRequest(BaseModel):
+    error_log: str = Field(..., example="File 'app.py', line 15, in <module>...")
+    repo_full_name: str = Field(..., example="username/repo-name")
+    branch: Optional[str] = "main"
 
-@app.get("/")
-def home():
-    return {"status": "AI Agent Brain is Online and Listening"}
-
-# 🚀 API 1: Deep Repo Analysis
-@app.post("/analyze-repo")
-async def analyze_repo(request: Request):
-    try:
-        data = await request.json()
-        file_list = data.get("files_context", "")
-
-        if not file_list:
-            return {
-                "target_file": "index.js",
-                "reason": "Repository is empty or missing core files.",
-                "action": "Initialize repository with basic structure"
-            }
-
-        prompt = f"""
-        Analyze this repository file tree:
-        {file_list}
-
-        Task: Act as an Autonomous DevOps Agent. Identify ONE file that is either missing, 
-        has logical bugs, or needs performance optimization.
-        Return ONLY a JSON object:
-        {{
-            "target_file": "path/to/file.js",
-            "reason": "Technical reason for selection",
-            "action": "What exact fix will be applied"
-        }}
-        """
-        chat = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            response_format={"type": "json_object"}
-        )
-        return json.loads(chat.choices[0].message.content)
-    except Exception as e:
-        print(f"Analysis Error: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="AI Analysis Failed")
-
-# 🛠️ API 2: Full Code Reconstruction (Zero-Error Fix)
-@app.post("/apply-fix")
-async def apply_fix(request: Request):
-    try:
-        data = await request.json()
-        file_path = data.get("file_path")
-        original_code = data.get("original_code", "")
-
-        # Edge Case: If file is empty or deleted
-        context = "This file is currently EMPTY or DELETED. Create it from scratch." if not original_code else f"Current Code:\n{original_code}"
-
-        prompt = f"""
-        Task: Reconstruct the file '{file_path}' to be production-ready and bug-free.
-        {context}
-        
-        Requirements:
-        1. Fix all syntax and logical errors.
-        2. Add professional error handling.
-        3. Return ONLY the code. No markdown blocks, no talk.
-        """
-        chat = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile"
-        )
-        fixed_code = chat.choices[0].message.content.strip()
-
-        # Clean any accidental markdown
-        if "```" in fixed_code:
-            fixed_code = fixed_code.split("```")[1]
-            if "\n" in fixed_code:
-                fixed_code = "\n".join(fixed_code.split("\n")[1:])
-
-        return {
-            "fixed_code": fixed_code,
-            "summary": f"Successfully healed {file_path}"
+# --- 2. GITHUB SERVICE (USER-CENTRIC) ---
+class GitHubService:
+    def __init__(self, token: str):
+        self.headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
         }
-    except Exception as e:
-        print(f"Fix Error: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/fix-error")
-async def fix_error(): 
-    return {"explanation": "Agent Online"}
+    def fetch_context(self, repo: str, file_path: str):
+        url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
+        res = requests.get(url, headers=self.headers)
+        if res.status_code == 200:
+            return base64.b64decode(res.json()['content']).decode('utf-8')
+        return "File content unavailable."
 
-# 🛡️ RENDER PORT BINDING LOGIC
-# Ye part Render ke 'Port scan timeout' ko fix karega
-if __name__ == "__main__":
-    # Render automatically sets 'PORT' environment variable
-    port = int(os.environ.get("PORT", 8000))
-    # '0.0.0.0' is mandatory to receive external traffic on Render
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    def fetch_diff(self, repo: str):
+        commits_url = f"https://api.github.com/repos/{repo}/commits"
+        res = requests.get(commits_url, headers=self.headers)
+        commits = res.json()
+        if len(commits) < 2: return "No recent changes found."
+        
+        compare_url = f"https://api.github.com/repos/{repo}/compare/{commits[1]['sha']}...{commits[0]['sha']}"
+        diff_data = requests.get(compare_url, headers=self.headers).json()
+        return "\n".join([f"File: {f['filename']}\n{f.get('patch', '')}" for f in diff_data.get('files', [])])
+
+    def create_pr(self, repo: str, file_path: str, new_content: str, fix_summary: str):
+        # Professional Workflow: Create Branch -> Update File -> Create PR
+        import time
+        branch_name = f"minion-fix-{int(time.time())}"
+        base_url = f"https://api.github.com/repos/{repo}"
+        
+        # 1. Get Main Branch SHA
+        main_ref = requests.get(f"{base_url}/git/refs/heads/main", headers=self.headers).json()
+        # 2. Create New Branch
+        requests.post(f"{base_url}/git/refs", headers=self.headers, json={"ref": f"refs/heads/{branch_name}", "sha": main_ref['object']['sha']})
+        # 3. Get File SHA for update
+        file_meta = requests.get(f"{base_url}/contents/{file_path}", headers=self.headers).json()
+        # 4. Update File
+        requests.put(f"{base_url}/contents/{file_path}", headers=self.headers, json={
+            "message": f"Minion Auto-Fix: {fix_summary}",
+            "content": base64.b64encode(new_content.encode()).decode(),
+            "sha": file_meta['sha'],
+            "branch": branch_name
+        })
+        # 5. Open Pull Request
+        pr_res = requests.post(f"{base_url}/pulls", headers=self.headers, json={
+            "title": f"🛠️ Minion Fix: {fix_summary}",
+            "head": branch_name,
+            "base": "main",
+            "body": f"I analyzed your logs and found the root cause. \n\n**Analysis:** {fix_summary}"
+        })
+        return pr_res.json().get("html_url")
+
+# --- 3. LOG PARSER ---
+def parse_error(log: str):
+    pattern = r'File "([^"]+)", line (\d+)'
+    match = re.search(pattern, log)
+    return {"file": match.group(1), "line": match.group(2)} if match else None
+
+# --- 4. SAAS ENDPOINT ---
+@app.post("/api/v1/investigate-and-fix")
+async def handle_incident(req: InvestigationRequest, x_github_token: str = Header(...)):
+    gh = GitHubService(x_github_token)
+    
+    # Identify Issue
+    loc = parse_error(req.error_log)
+    if not loc: raise HTTPException(status_code=400, detail="Invalid log format")
+    
+    # Gather Intelligence
+    diff = gh.fetch_diff(req.repo_full_name)
+    code = gh.fetch_context(req.repo_full_name, loc['file'])
+
+    # AI Reasoning (Groq)
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    prompt = f"System Context: Recent Changes:\n{diff}\n\nFile Content:\n{code}\n\nError Log:\n{req.error_log}\n\nReturn JSON: {{'analysis': '...', 'new_code': '...', 'summary': '...'}}"
+    
+    response = client.chat.completions.create(
+        messages=[{"role": "system", "content": "You are an SRE bot. Output only valid JSON."}, 
+                  {"role": "user", "content": prompt}],
+        model="llama-3.3-70b-specdec",
+        response_format={"type": "json_object"}
+    )
+    
+    import json
+    ai_data = json.loads(response.choices[0].message.content)
+    
+    # 5. Action: Automatic Pull Request
+    pr_url = gh.create_pr(req.repo_full_name, loc['file'], ai_data['new_code'], ai_data['summary'])
+
+    return {
+        "status": "Incident Resolved",
+        "root_cause": ai_data['analysis'],
+        "pull_request": pr_url
+    }
