@@ -1,8 +1,7 @@
 fastapi
 uvicorn
 groq
-pydantic
+pydantic>=2.0.0
 python-multipart
 chromadb
 sentence-transformers
-# PyGithub, cryptography, PyJWT ab optional hain kyunki Node logic handle kar raha hai
