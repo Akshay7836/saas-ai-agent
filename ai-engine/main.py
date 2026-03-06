@@ -2,44 +2,82 @@ import os
 import json
 import traceback
 import uvicorn
+import chromadb
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
 from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 app = FastAPI()
 
-# 🔑 Groq Client setup
+# 🔑 AI Setup
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# 📂 RAG Engine Setup
+# Using chromadb.Client() for in-memory (Standard Render setup)
+# Note: For production, consider chromadb.PersistentClient(path="./chroma_db")
+chroma_client = chromadb.Client()
+collection = chroma_client.get_or_create_collection(name="repo_code")
+# Lightweight model to convert code into vectors
+embed_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 @app.get("/")
 def home():
-    return {"status": "AI Agent Brain is Online and Listening"}
+    return {"status": "AI Agent Brain is Online with RAG Memory"}
 
-# 🚀 API 1: Deep Repo Analysis
+# 🧠 API 1: Indexing Phase
+# This stores the repo content so the AI can "search" it later
+@app.post("/index-repo")
+async def index_repo(request: Request):
+    try:
+        data = await request.json()
+        files_dict = data.get("files", {}) # Expecting {"path": "content"}
+        
+        for path, content in files_dict.items():
+            embedding = embed_model.encode(content).tolist()
+            collection.add(
+                embeddings=[embedding],
+                documents=[content],
+                metadatas=[{"path": path}],
+                ids=[path]
+            )
+        return {"status": "success", "indexed_files": len(files_dict)}
+    except Exception as e:
+        print(f"Indexing Error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 🚀 API 2: Deep Analysis (Multi-Issue)
 @app.post("/analyze-repo")
 async def analyze_repo(request: Request):
     try:
         data = await request.json()
         file_list = data.get("files_context", "")
 
-        if not file_list:
-            return {
-                "target_file": "index.js",
-                "reason": "Repository is empty or missing core files.",
-                "action": "Initialize repository with basic structure"
-            }
+        # 🔍 RAG Step: Find code related to structural/connection issues
+        query = "Find HTML buttons, event listeners, and JS function definitions."
+        query_embedding = embed_model.encode(query).tolist()
+        results = collection.query(query_embeddings=[query_embedding], n_results=5)
+        
+        # Combine retrieved snippets for context
+        retrieved_context = "\n---\n".join(results['documents'][0])
 
         prompt = f"""
-        Analyze this repository file tree:
-        {file_list}
+        Analyze this repository structure: {file_list}
+        
+        Additional Code Context:
+        {retrieved_context}
 
-        Task: Act as an Autonomous DevOps Agent. Identify ONE file that is either missing, 
-        has logical bugs, or needs performance optimization.
+        Task: Act as a Lead Developer. Identify ALL critical issues (bugs, missing UI-to-Logic connections, or performance bottlenecks).
+        Specifically, check if HTML buttons call functions that don't exist, or if functions are defined but never used.
+
         Return ONLY a JSON object:
         {{
-            "target_file": "path/to/file.js",
-            "reason": "Technical reason for selection",
-            "action": "What exact fix will be applied"
+            "issues": [
+                {{
+                    "target_file": "path/to/file",
+                    "reason": "Why this is a problem",
+                    "action": "How to fix it"
+                }}
+            ]
         }}
         """
         chat = client.chat.completions.create(
@@ -52,7 +90,7 @@ async def analyze_repo(request: Request):
         print(f"Analysis Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="AI Analysis Failed")
 
-# 🛠️ API 2: Full Code Reconstruction (Zero-Error Fix)
+# 🛠️ API 3: Smart Reconstruction
 @app.post("/apply-fix")
 async def apply_fix(request: Request):
     try:
@@ -60,17 +98,12 @@ async def apply_fix(request: Request):
         file_path = data.get("file_path")
         original_code = data.get("original_code", "")
 
-        # Edge Case: If file is empty or deleted
-        context = "This file is currently EMPTY or DELETED. Create it from scratch." if not original_code else f"Current Code:\n{original_code}"
+        context = "File is EMPTY. Create it from scratch." if not original_code else f"Current Code:\n{original_code}"
 
         prompt = f"""
-        Task: Reconstruct the file '{file_path}' to be production-ready and bug-free.
+        Task: Reconstruct '{file_path}' to be production-ready and fix the identified issues.
         {context}
-        
-        Requirements:
-        1. Fix all syntax and logical errors.
-        2. Add professional error handling.
-        3. Return ONLY the code. No markdown blocks, no talk.
+        Return ONLY the raw code. No explanation. No markdown blocks.
         """
         chat = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -78,28 +111,16 @@ async def apply_fix(request: Request):
         )
         fixed_code = chat.choices[0].message.content.strip()
 
-        # Clean any accidental markdown
+        # Final cleanup for raw code delivery
         if "```" in fixed_code:
             fixed_code = fixed_code.split("```")[1]
             if "\n" in fixed_code:
                 fixed_code = "\n".join(fixed_code.split("\n")[1:])
 
-        return {
-            "fixed_code": fixed_code,
-            "summary": f"Successfully healed {file_path}"
-        }
+        return {"fixed_code": fixed_code, "summary": f"Successfully healed {file_path}"}
     except Exception as e:
-        print(f"Fix Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/fix-error")
-async def fix_error(): 
-    return {"explanation": "Agent Online"}
-
-# 🛡️ RENDER PORT BINDING LOGIC
-# Ye part Render ke 'Port scan timeout' ko fix karega
 if __name__ == "__main__":
-    # Render automatically sets 'PORT' environment variable
     port = int(os.environ.get("PORT", 8000))
-    # '0.0.0.0' is mandatory to receive external traffic on Render
     uvicorn.run(app, host="0.0.0.0", port=port)
