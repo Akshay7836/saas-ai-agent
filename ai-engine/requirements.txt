@@ -6,3 +6,4 @@ python-multipart==0.0.9
 chromadb==0.4.24
 sentence-transformers==2.5.1
 numpy>=1.26.4,<2.0.0
+httpx==0.27.2
