@@ -3,4 +3,5 @@ uvicorn
 groq
 pydantic
 python-multipart
-# PyGithub, cryptography, PyJWT ab optional hain kyunki Node logic handle kar raha hai
+requests
+python-dotenv
