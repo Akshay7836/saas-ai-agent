@@ -31,7 +31,7 @@ async def analyze_repo(request: Request):
         
         chat = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-specdec",
+            model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )
         return json.loads(chat.choices[0].message.content)
@@ -50,7 +50,7 @@ async def apply_fix(request: Request):
         
         chat = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-specdec",
+            model="llama-3.3-70b-versatile",
             response_format={"type": "json_object"}
         )
         return json.loads(chat.choices[0].message.content)
