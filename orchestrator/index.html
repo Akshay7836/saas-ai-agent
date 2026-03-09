@@ -1,23 +1,62 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SRE Minion</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SRE Minion | Autonomous DevOps</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #0f172a; color: #f8fafc; font-family: 'Segoe UI', sans-serif; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; }
+        .btn-agent { background: #3b82f6; border: none; transition: 0.3s; color: white; }
+        .btn-agent:hover { background: #2563eb; transform: translateY(-2px); color: white; }
+        .btn-success { background: #10b981; border: none; }
+        .input-group-text { background: #334155; color: #94a3b8; border: 1px solid #475569; }
+        .form-control { background: #0f172a; border: 1px solid #475569; color: white; }
+        .form-control:focus { background: #0f172a; color: white; border-color: #3b82f6; box-shadow: none; }
+        #log { border-left: 4px solid #3b82f6; background: #020617 !important; }
+        .spinner-border { width: 1.2rem; height: 1.2rem; margin-right: 8px; display: none; }
+    </style>
 </head>
-<body class="bg-light p-5">
-    <div class="container mt-5" style="max-width: 500px;">
-        <div class="card shadow p-4">
-            <h3 class="text-center mb-4">🤖 Minion SRE</h3>
-            <a href="https://github.com/apps/devopsai-agent/installations/new" class="btn btn-dark w-100 mb-4">1. Link GitHub</a>
+<body class="p-5">
+    <div class="container mt-5" style="max-width: 550px;">
+        <div class="text-center mb-4">
+            <h2 class="fw-bold text-white">🤖 Minion SRE</h2>
+            <p class="text-muted">Autonomous Repository Healing Agent</p>
+        </div>
+
+        <div class="card shadow-lg p-4">
+            <div class="mb-4">
+                <label class="small text-uppercase fw-bold text-muted mb-2">Step 1: Authorization</label>
+                <a href="https://github.com/apps/devopsai-agent/installations/new" class="btn btn-outline-light w-100 d-flex align-items-center justify-content-center">
+                    <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" width="20" class="me-2" style="filter: invert(1);">
+                    Link GitHub Repository
+                </a>
+            </div>
             
             <div id="ui" class="d-none">
-                <input type="text" id="repo" class="form-control mb-3" placeholder="owner/repo">
-                <button id="scanBtn" onclick="runScan()" class="btn btn-primary w-100 mb-3">2. Deep Scan</button>
-                <div id="log" class="p-2 bg-dark text-success small rounded mb-3 d-none" style="font-family: monospace;"></div>
-                <button id="fixBtn" onclick="runFix()" class="btn btn-success w-100 d-none">3. Deploy Fix</button>
-                <div id="final" class="mt-3 d-none alert alert-info"></div>
+                <label class="small text-uppercase fw-bold text-muted mb-2">Step 2: Target Repository</label>
+                <div class="input-group mb-3">
+                    <span class="input-group-text">github.com/</span>
+                    <input type="text" id="repo" class="form-control" placeholder="username/repository">
+                </div>
+
+                <button id="scanBtn" onclick="runScan()" class="btn btn-agent w-100 py-2 fw-bold mb-3">
+                    <span id="scanSpinner" class="spinner-border spinner-border-sm"></span>
+                    Initialize Deep Scan
+                </button>
+
+                <div id="log" class="p-3 bg-dark text-info small rounded mb-3 d-none" style="font-family: 'Courier New', monospace; line-height: 1.6;"></div>
+                
+                <button id="fixBtn" onclick="runFix()" class="btn btn-success w-100 py-2 fw-bold d-none">
+                    <span id="fixSpinner" class="spinner-border spinner-border-sm"></span>
+                    Deploy Autonomous Fix
+                </button>
+
+                <div id="final" class="mt-3 d-none alert alert-success border-0 text-center"></div>
             </div>
         </div>
+        <p class="text-center mt-4 text-muted small">Powered by Llama-3.3 & Groq Infra</p>
     </div>
 
     <script>
@@ -25,38 +64,66 @@
         const instId = urlParams.get('installation_id');
         let currentTarget = ""; 
 
+        // Auto-show UI if installed
         if(instId) document.getElementById('ui').classList.remove('d-none');
 
         async function runScan() {
             const repo = document.getElementById('repo').value;
             const log = document.getElementById('log');
+            const btn = document.getElementById('scanBtn');
+            const spinner = document.getElementById('scanSpinner');
+
+            if(!repo) return alert("Please enter username/repository");
+
+            btn.disabled = true;
+            spinner.style.display = "inline-block";
             log.classList.remove('d-none');
-            log.innerText = ">> AI Analyzing Repository...";
+            log.innerHTML = ">> [SYSTEM] Accessing GitHub API...<br>>> [AI] Analyzing code patterns...";
             
-            const res = await fetch('/scan', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ repo, installation_id: instId })
-            });
-            const data = await res.json();
-            currentTarget = data.target_file;
-            log.innerText = `>> Target: ${data.target_file}\n>> Reason: ${data.reason}`;
-            document.getElementById('fixBtn').classList.remove('d-none');
+            try {
+                const res = await fetch('/scan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ repo, installation_id: instId })
+                });
+                const data = await res.json();
+                
+                currentTarget = data.target_file;
+                log.innerHTML = `>> <span class='text-warning'>ANALYSIS COMPLETE</span><br>>> <b>Target:</b> ${data.target_file}<br>>> <b>Issue:</b> ${data.reason}`;
+                document.getElementById('fixBtn').classList.remove('d-none');
+            } catch (err) {
+                log.innerHTML = ">> <span class='text-danger'>ERROR: Scan failed. Check logs.</span>";
+            } finally {
+                btn.disabled = false;
+                spinner.style.display = "none";
+            }
         }
 
         async function runFix() {
             const repo = document.getElementById('repo').value;
             const final = document.getElementById('final');
-            final.classList.remove('d-none');
-            final.innerText = ">> Deploying Fix...";
+            const btn = document.getElementById('fixBtn');
+            const spinner = document.getElementById('fixSpinner');
 
-            const res = await fetch('/apply-fix', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ repo, installation_id: instId, target_file: currentTarget })
-            });
-            const data = await res.json();
-            final.innerHTML = `Success! <a href="${data.pr_url}" target="_blank">View Pull Request</a>`;
+            btn.disabled = true;
+            spinner.style.display = "inline-block";
+            final.classList.remove('d-none');
+            final.innerText = "Processing fix & generating Pull Request...";
+
+            try {
+                const res = await fetch('/apply-fix', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ repo, installation_id: instId, target_file: currentTarget })
+                });
+                const data = await res.json();
+                final.innerHTML = `🎉 <b>Heal Complete!</b><br><a href="${data.pr_url}" target="_blank" class="btn btn-sm btn-light mt-2">View Pull Request</a>`;
+            } catch (err) {
+                final.innerText = "Error deploying fix.";
+            } finally {
+                btn.disabled = false;
+                spinner.style.display = "none";
+            }
         }
     </script>
 </body>
