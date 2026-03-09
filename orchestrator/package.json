@@ -1,12 +1,15 @@
-
 {
-  "dependencies": {
-    "axios": "^1.6.0",
-    "express": "^4.18.2",
-    "@octokit/rest": "^19.0.0",
-    "@octokit/auth-app": "^4.0.0" 
+  "name": "sre-minion-orchestrator",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
   },
-  "scripts": { 
-    "start": "node server.js" 
+  "dependencies": {
+    "@octokit/auth-app": "^6.0.0",
+    "@octokit/rest": "^20.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2"
   }
 }
