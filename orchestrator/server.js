@@ -1,20 +1,22 @@
 const express = require('express');
 const axios = require('axios');
+const path = require('path');
 const { Octokit } = require("@octokit/rest");
 const { createAppAuth } = require("@octokit/auth-app");
+require('dotenv').config();
+
 const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname)));
 
 const APP_ID = process.env.GITHUB_APP_ID;
 const PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n');
-const PYTHON_URL = process.env.PYTHON_URL.replace(/\/$/, "");
+const PYTHON_URL = process.env.PYTHON_URL?.replace(/\/$/, "");
 
-app.use(express.json());
-app.use(express.static(__dirname));
-
-async function getAgentOctokit(id) {
+async function getOcto(installationId) {
     return new Octokit({
         authStrategy: createAppAuth,
-        auth: { appId: APP_ID, privateKey: PRIVATE_KEY, installationId: id },
+        auth: { appId: APP_ID, privateKey: PRIVATE_KEY, installationId },
     });
 }
 
@@ -22,67 +24,59 @@ app.post('/scan', async (req, res) => {
     try {
         const { repo, installation_id } = req.body;
         const [owner, repoName] = repo.split('/');
-        const octo = await getAgentOctokit(installation_id);
+        const octo = await getOcto(installation_id);
 
         const { data: tree } = await octo.git.getTree({ 
             owner, repo: repoName, tree_sha: 'main', recursive: true 
         });
 
-        const files = tree.tree
-            .filter(f => f.type === 'blob' && !f.path.includes('node_modules'))
-            .map(f => f.path).join(", ");
-
+        const files = tree.tree.filter(f => f.type === 'blob').map(f => f.path).join(", ");
         const ai = await axios.post(`${PYTHON_URL}/analyze-repo`, { files_context: files });
+        
         res.json({ ...ai.data, repo });
     } catch (e) {
-        res.status(500).json({ explanation: "Check App Permissions on GitHub." });
+        console.error(e);
+        res.status(500).json({ error: "Scan failed. Check Python URL and App Permissions." });
     }
 });
 
 app.post('/apply-fix', async (req, res) => {
     try {
-        const { repo, installation_id } = req.body;
+        const { repo, installation_id, target_file } = req.body;
         const [owner, repoName] = repo.split('/');
-        const octo = await getAgentOctokit(installation_id);
+        const octo = await getOcto(installation_id);
 
-        const { data: tree } = await octo.git.getTree({ owner, repo: repoName, tree_sha: 'main', recursive: true });
-        const files = tree.tree.map(f => f.path).join(", ");
-        const analysis = await axios.post(`${PYTHON_URL}/analyze-repo`, { files_context: files });
-        const target = analysis.data.target_file;
-
-        let original = "";
-        let fileSha = null; // SHA buffer fix
+        let originalCode = "";
+        let sha = null;
         try {
-            const { data: file } = await octo.repos.getContent({ owner, repo: repoName, path: target });
-            original = Buffer.from(file.content, 'base64').toString();
-            fileSha = file.sha; // Capture SHA for update
-        } catch (err) { console.log("Creating new file..."); }
+            const { data: file } = await octo.repos.getContent({ owner, repo: repoName, path: target_file });
+            originalCode = Buffer.from(file.content, 'base64').toString();
+            sha = file.sha;
+        } catch (fErr) { console.log("New file mode"); }
 
-        const fix = await axios.post(`${PYTHON_URL}/apply-fix`, { file_path: target, original_code: original });
+        const aiFix = await axios.post(`${PYTHON_URL}/apply-fix`, { file_path: target_file, original_code: originalCode });
+        
+        const branch = `fix-${Date.now()}`;
+        const { data: mainRes } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
+        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: mainRes.object.sha });
 
-        const branch = `ai-heal-${Date.now()}`;
-        const { data: ref } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
-        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: ref.object.sha });
-
-        // FIX: Added 'sha' to the update call
         await octo.repos.createOrUpdateFileContents({
-            owner, repo: repoName, path: target, 
-            message: `🤖 AI Minion: Fixed ${target}`,
-            content: Buffer.from(fix.data.fixed_code).toString('base64'),
-            branch, 
-            sha: fileSha 
+            owner, repo: repoName, path: target_file,
+            message: `🤖 AI Fix for ${target_file}`,
+            content: Buffer.from(aiFix.data.fixed_code).toString('base64'),
+            branch, sha
         });
 
         const pr = await octo.pulls.create({
-            owner, repo: repoName, title: `🛡️ AI Fix: ${target}`,
-            head: branch, base: 'main', 
-            body: `### 🤖 AI Agent Report\n- **Target:** ${target}\n- **Action:** ${analysis.data.action}`
+            owner, repo: repoName, title: `🛡️ Minion Heal: ${target_file}`,
+            head: branch, base: 'main', body: "AI identified and fixed a logical issue."
         });
 
-        res.json({ status: "success", pr_url: pr.data.html_url });
+        res.json({ pr_url: pr.data.html_url });
     } catch (e) {
-        res.status(500).json({ status: "error", message: e.message });
+        console.error(e);
+        res.status(500).json({ error: e.message });
     }
 });
 
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 3000, () => console.log("Server Live"));

@@ -1,17 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SRE Minion</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light p-5">
+    <div class="container mt-5" style="max-width: 500px;">
+        <div class="card shadow p-4">
+            <h3 class="text-center mb-4">🤖 Minion SRE</h3>
+            <a href="https://github.com/apps/YOUR_APP_NAME/installations/new" class="btn btn-dark w-100 mb-4">1. Link GitHub</a>
+            
+            <div id="ui" class="d-none">
+                <input type="text" id="repo" class="form-control mb-3" placeholder="owner/repo">
+                <button id="scanBtn" onclick="runScan()" class="btn btn-primary w-100 mb-3">2. Deep Scan</button>
+                <div id="log" class="p-2 bg-dark text-success small rounded mb-3 d-none" style="font-family: monospace;"></div>
+                <button id="fixBtn" onclick="runFix()" class="btn btn-success w-100 d-none">3. Deploy Fix</button>
+                <div id="final" class="mt-3 d-none alert alert-info"></div>
+            </div>
+        </div>
+    </div>
 
-<div id="agent-ui" class="d-none">
-    <div class="mb-3">
-        <label class="form-label small fw-bold">Target Repository</label>
-        <input type="text" id="repo" class="form-control" placeholder="username/repository">
-    </div>
-    <button id="scanBtn" onclick="run('scan')" class="btn btn-agent w-100 py-2 fw-bold mb-3">Initialize Deep Scan</button>
-    
-    <div id="logBox" class="p-3 mb-3 d-none border rounded bg-dark text-light small" style="white-space: pre-wrap;"></div>
-    
-    <button id="fixBtn" onclick="run('fix')" class="btn btn-success w-100 py-2 fw-bold d-none">Deploy Autonomous Fix</button>
-    
-    <div id="prResult" class="mt-3 d-none text-center">
-        <div class="alert alert-success">🎉 Healing Complete! PR Raised.</div>
-        <a id="prLink" target="_blank" class="btn btn-outline-dark btn-sm">Review Changes</a>
-    </div>
-</div>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const instId = urlParams.get('installation_id');
+        let currentTarget = ""; 
+
+        if(instId) document.getElementById('ui').classList.remove('d-none');
+
+        async function runScan() {
+            const repo = document.getElementById('repo').value;
+            const log = document.getElementById('log');
+            log.classList.remove('d-none');
+            log.innerText = ">> AI Analyzing Repository...";
+            
+            const res = await fetch('/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ repo, installation_id: instId })
+            });
+            const data = await res.json();
+            currentTarget = data.target_file;
+            log.innerText = `>> Target: ${data.target_file}\n>> Reason: ${data.reason}`;
+            document.getElementById('fixBtn').classList.remove('d-none');
+        }
+
+        async function runFix() {
+            const repo = document.getElementById('repo').value;
+            const final = document.getElementById('final');
+            final.classList.remove('d-none');
+            final.innerText = ">> Deploying Fix...";
+
+            const res = await fetch('/apply-fix', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ repo, installation_id: instId, target_file: currentTarget })
+            });
+            const data = await res.json();
+            final.innerHTML = `Success! <a href="${data.pr_url}" target="_blank">View Pull Request</a>`;
+        }
+    </script>
+</body>
+</html>
