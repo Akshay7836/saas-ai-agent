@@ -1,93 +1,161 @@
-const express = require('express');
-const axios = require('axios');
-const path = require('path');
-const { Octokit } = require("@octokit/rest");
-const { createAppAuth } = require("@octokit/auth-app");
-require('dotenv').config();
+const express=require("express")
+const axios=require("axios")
+const path=require("path")
+const {Octokit}=require("@octokit/rest")
+const {createAppAuth}=require("@octokit/auth-app")
+require("dotenv").config()
 
-const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+const app=express()
+app.use(express.json())
+app.use(express.static(path.join(__dirname)))
 
-const APP_ID = process.env.GITHUB_APP_ID;
-const PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n');
-const PYTHON_URL = process.env.PYTHON_URL?.replace(/\/$/, "");
+const APP_ID=process.env.GITHUB_APP_ID
+const PRIVATE_KEY=process.env.GITHUB_PRIVATE_KEY.replace(/\\n/g,"\n")
+const PYTHON_URL=process.env.PYTHON_URL?.replace(/\/$/,"")
 
-async function getOcto(installationId) {
-    return new Octokit({
-        authStrategy: createAppAuth,
-        auth: { appId: APP_ID, privateKey: PRIVATE_KEY, installationId },
-    });
+async function getOcto(installationId){
+
+return new Octokit({
+authStrategy:createAppAuth,
+auth:{appId:APP_ID,privateKey:PRIVATE_KEY,installationId}
+})
+
 }
 
-app.post('/scan', async (req, res) => {
-    try {
-        const { repo, installation_id } = req.body;
-        if (!repo || !installation_id) throw new Error("Missing repo or installation_id");
-        
-        const [owner, repoName] = repo.split('/');
-        const octo = await getOcto(installation_id);
+app.post("/scan",async(req,res)=>{
 
-        const { data: tree } = await octo.git.getTree({ 
-            owner, repo: repoName, tree_sha: 'main', recursive: true 
-        });
+try{
 
-        const files = tree.tree.filter(f => f.type === 'blob').map(f => f.path).join(", ");
-        const ai = await axios.post(`${PYTHON_URL}/analyze-repo`, { files_context: files });
-        
-        res.json({ ...ai.data, repo });
-    } catch (e) {
-        console.error("SCAN ERROR:", e.response?.data || e.message);
-        res.status(500).json({ error: "Scan failed. Check Python URL and App Permissions." });
-    }
-});
+const {repo,installation_id}=req.body
+const [owner,repoName]=repo.split("/")
 
-app.post('/apply-fix', async (req, res) => {
-    try {
-        const { repo, installation_id, target_file } = req.body;
-        if (!target_file) throw new Error("No target file identified by AI.");
+const octo=await getOcto(installation_id)
 
-        const [owner, repoName] = repo.split('/');
-        const octo = await getOcto(installation_id);
+const repoInfo=await octo.repos.get({owner,repo:repoName})
+const defaultBranch=repoInfo.data.default_branch
 
-        let originalCode = "";
-        let sha = null;
-        try {
-            const { data: file } = await octo.repos.getContent({ owner, repo: repoName, path: target_file });
-            originalCode = Buffer.from(file.content, 'base64').toString();
-            sha = file.sha;
-        } catch (fErr) { console.log("New file mode or error fetching content"); }
+const tree=await octo.git.getTree({
+owner,
+repo:repoName,
+tree_sha:defaultBranch,
+recursive:true
+})
 
-        const aiFix = await axios.post(`${PYTHON_URL}/apply-fix`, { file_path: target_file, original_code: originalCode });
-        
-        // --- 🛡️ BUFFER FIX START ---
-        const finalCode = aiFix.data.fixed_code;
-        // Agar AI ne object bhej diya toh use string mein convert karenge
-        const codeString = typeof finalCode === 'string' ? finalCode : JSON.stringify(finalCode, null, 2);
-        // --- 🛡️ BUFFER FIX END ---
+const importantFiles=tree.data.tree.filter(f=>
 
-        const branch = `fix-${Date.now()}`;
-        const { data: mainRes } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
-        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: mainRes.object.sha });
+f.path.endsWith(".js")||
+f.path.endsWith(".ts")||
+f.path.endsWith(".py")||
+f.path==="package.json"
 
-        await octo.repos.createOrUpdateFileContents({
-            owner, repo: repoName, path: target_file,
-            message: `🤖 AI Fix for ${target_file}`,
-            content: Buffer.from(codeString).toString('base64'), 
-            branch, 
-            sha
-        });
+).slice(0,5)
 
-        const pr = await octo.pulls.create({
-            owner, repo: repoName, title: `🛡️ Minion Heal: ${target_file}`,
-            head: branch, base: 'main', body: "AI identified and fixed a logical issue automatically."
-        });
+let fileData=[]
 
-        res.json({ pr_url: pr.data.html_url });
-    } catch (e) {
-        console.error("APPLY FIX ERROR:", e.response?.data || e.message);
-        res.status(500).json({ error: e.message });
-    }
-});
+for(let file of importantFiles){
 
-app.listen(process.env.PORT || 3000, () => console.log("Server Live"));
+const content=await octo.repos.getContent({
+owner,
+repo:repoName,
+path:file.path
+})
+
+const code=Buffer.from(content.data.content,"base64").toString()
+
+fileData.push({
+path:file.path,
+code:code.slice(0,2000)
+})
+
+}
+
+const ai=await axios.post(`${PYTHON_URL}/analyze-repo`,{files:fileData})
+
+res.json(ai.data)
+
+}catch(e){
+
+console.error(e)
+res.status(500).json({error:"Scan failed"})
+
+}
+
+})
+
+app.post("/apply-fix",async(req,res)=>{
+
+try{
+
+const {repo,installation_id,target_file}=req.body
+
+const [owner,repoName]=repo.split("/")
+
+const octo=await getOcto(installation_id)
+
+const file=await octo.repos.getContent({
+owner,
+repo:repoName,
+path:target_file
+})
+
+const originalCode=Buffer.from(file.data.content,"base64").toString()
+
+const aiFix=await axios.post(`${PYTHON_URL}/apply-fix`,{
+file_path:target_file,
+original_code:originalCode
+})
+
+const codeString=typeof aiFix.data.fixed_code==="string"
+?aiFix.data.fixed_code
+:JSON.stringify(aiFix.data.fixed_code,null,2)
+
+const branch=`ai-fix-${Date.now()}`
+
+const mainRef=await octo.git.getRef({
+owner,
+repo:repoName,
+ref:"heads/main"
+})
+
+await octo.git.createRef({
+owner,
+repo:repoName,
+ref:`refs/heads/${branch}`,
+sha:mainRef.data.object.sha
+})
+
+await octo.repos.createOrUpdateFileContents({
+
+owner,
+repo:repoName,
+path:target_file,
+message:`AI Fix for ${target_file}`,
+content:Buffer.from(codeString).toString("base64"),
+branch,
+sha:file.data.sha
+
+})
+
+const pr=await octo.pulls.create({
+
+owner,
+repo:repoName,
+title:`AI Fix: ${target_file}`,
+head:branch,
+base:"main",
+body:`AI automatically fixed an issue in ${target_file}`
+
+})
+
+res.json({pr_url:pr.data.html_url})
+
+}catch(e){
+
+console.error(e)
+res.status(500).json({error:"Fix failed"})
+
+}
+
+})
+
+app.listen(process.env.PORT||3000,()=>console.log("Server running"))
