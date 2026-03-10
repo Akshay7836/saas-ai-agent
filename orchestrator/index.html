@@ -1,174 +1,81 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SRE Minion | Autonomous DevOps</title>
-
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-
+<title>AI DevOps Agent</title>
 <style>
-body{background:#0f172a;color:#f8fafc;font-family:'Segoe UI'}
-.card{background:#1e293b;border:1px solid #334155;border-radius:16px}
-.btn-agent{background:#3b82f6;border:none;color:white}
-.btn-agent:hover{background:#2563eb}
-.btn-success{background:#10b981;border:none}
-#log{border-left:4px solid #3b82f6;background:#020617!important}
-.spinner-border{display:none;width:1.2rem;height:1.2rem;margin-right:8px}
+body{font-family:Arial;background:#0f172a;color:white;padding:40px}
+input,button{padding:10px;margin:5px}
+#log{margin-top:20px;background:#111;padding:15px;border-radius:8px}
 </style>
 </head>
 
-<body class="p-5">
+<body>
 
-<div class="container mt-5" style="max-width:550px">
+<h2>🤖 DevOps AI Agent</h2>
 
-<div class="text-center mb-4">
-<h2 class="fw-bold">🤖 Minion SRE</h2>
-<p class="text-muted">Autonomous Repository Healing Agent</p>
-</div>
+<input id="repo" placeholder="username/repository">
+<button onclick="scan()">Scan Repo</button>
 
-<div class="card p-4 shadow">
+<div id="log"></div>
 
-<div class="mb-4">
-<label class="small text-uppercase text-muted fw-bold mb-2">Step 1: Authorization</label>
-
-<a href="https://github.com/apps/devopsai-agent/installations/new"
-class="btn btn-outline-light w-100">
-
-Link GitHub Repository
-
-</a>
-</div>
-
-<div id="ui" class="d-none">
-
-<label class="small text-uppercase text-muted fw-bold mb-2">Step 2: Target Repository</label>
-
-<div class="input-group mb-3">
-
-<span class="input-group-text">github.com/</span>
-
-<input type="text" id="repo" class="form-control" placeholder="username/repository">
-
-</div>
-
-<button id="scanBtn" onclick="runScan()" class="btn btn-agent w-100 mb-3">
-
-<span id="scanSpinner" class="spinner-border spinner-border-sm"></span>
-
-Initialize Deep Scan
-
+<button id="fixBtn" onclick="applyFix()" style="display:none">
+Generate Fix PR
 </button>
-
-<div id="log" class="p-3 text-info small rounded mb-3 d-none"
-style="font-family:monospace"></div>
-
-<button id="fixBtn" onclick="runFix()" class="btn btn-success w-100 d-none">
-
-<span id="fixSpinner" class="spinner-border spinner-border-sm"></span>
-
-Deploy Autonomous Fix
-
-</button>
-
-<div id="final" class="mt-3 d-none alert alert-success text-center"></div>
-
-</div>
-</div>
-</div>
 
 <script>
 
-const urlParams=new URLSearchParams(window.location.search)
-const instId=urlParams.get("installation_id")
+let installation_id = new URLSearchParams(window.location.search).get("installation_id")
+let targetFile = null
 
-let currentTarget=""
+async function scan(){
 
-if(instId) document.getElementById("ui").classList.remove("d-none")
+let repo=document.getElementById("repo").value
 
-async function runScan(){
-
-const repo=document.getElementById("repo").value
-
-if(!repo.match(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/)){
-alert("Invalid repository format")
-return
-}
-
-const log=document.getElementById("log")
-const btn=document.getElementById("scanBtn")
-const spinner=document.getElementById("scanSpinner")
-
-btn.disabled=true
-spinner.style.display="inline-block"
-
-log.classList.remove("d-none")
-log.innerHTML="Analyzing repository..."
-
-try{
+document.getElementById("log").innerHTML="Scanning repository..."
 
 const res=await fetch("/scan",{
 method:"POST",
-headers:{"Content-Type":"application/json"},
-body:JSON.stringify({repo,installation_id:instId})
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({repo,installation_id})
 })
 
 const data=await res.json()
 
-currentTarget=data.target_file
+targetFile=data.target_file
 
-log.innerHTML=
-
-`<b>AI Analysis</b><br>
+document.getElementById("log").innerHTML=`
 Target File: ${data.target_file}<br>
 Reason: ${data.reason}<br>
-Action: ${data.action}`
+Action: ${data.action}
+`
 
-document.getElementById("fixBtn").classList.remove("d-none")
-
-}catch(e){
-
-log.innerHTML="Scan failed"
+document.getElementById("fixBtn").style.display="block"
 
 }
 
-btn.disabled=false
-spinner.style.display="none"
-}
+async function applyFix(){
 
-async function runFix(){
+let repo=document.getElementById("repo").value
 
-const repo=document.getElementById("repo").value
-const btn=document.getElementById("fixBtn")
-const spinner=document.getElementById("fixSpinner")
-const final=document.getElementById("final")
-
-btn.disabled=true
-spinner.style.display="inline-block"
-
-final.classList.remove("d-none")
-final.innerText="Generating fix..."
-
-try{
+document.getElementById("log").innerHTML="Applying fix..."
 
 const res=await fetch("/apply-fix",{
 method:"POST",
-headers:{"Content-Type":"application/json"},
-body:JSON.stringify({repo,installation_id:instId,target_file:currentTarget})
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({
+repo,
+installation_id,
+target_file:targetFile
+})
 })
 
 const data=await res.json()
 
-final.innerHTML=`Fix Complete<br><a href="${data.pr_url}" target="_blank">View Pull Request</a>`
+document.getElementById("log").innerHTML=`
+Fix Created:<br>
+<a href="${data.pr_url}" target="_blank">${data.pr_url}</a>
+`
 
-}catch{
-
-final.innerText="Fix failed"
-
-}
-
-btn.disabled=false
-spinner.style.display="none"
 }
 
 </script>

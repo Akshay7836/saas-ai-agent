@@ -6,6 +6,7 @@ const {createAppAuth}=require("@octokit/auth-app")
 require("dotenv").config()
 
 const app=express()
+
 app.use(express.json())
 app.use(express.static(path.join(__dirname)))
 
@@ -27,30 +28,30 @@ app.post("/scan",async(req,res)=>{
 try{
 
 const {repo,installation_id}=req.body
+
 const [owner,repoName]=repo.split("/")
 
 const octo=await getOcto(installation_id)
 
 const repoInfo=await octo.repos.get({owner,repo:repoName})
-const defaultBranch=repoInfo.data.default_branch
+
+const branch=repoInfo.data.default_branch
 
 const tree=await octo.git.getTree({
 owner,
 repo:repoName,
-tree_sha:defaultBranch,
+tree_sha:branch,
 recursive:true
 })
 
 const importantFiles=tree.data.tree.filter(f=>
 
-f.path.endsWith(".js")||
-f.path.endsWith(".ts")||
-f.path.endsWith(".py")||
-f.path==="package.json"
+f.path.includes("src/") &&
+(f.path.endsWith(".ts") || f.path.endsWith(".js"))
 
-).slice(0,5)
+).slice(0,20)
 
-let fileData=[]
+let files=[]
 
 for(let file of importantFiles){
 
@@ -62,21 +63,26 @@ path:file.path
 
 const code=Buffer.from(content.data.content,"base64").toString()
 
-fileData.push({
+files.push({
 path:file.path,
-code:code.slice(0,2000)
+code:code.slice(0,4000)
 })
 
 }
 
-const ai=await axios.post(`${PYTHON_URL}/analyze-repo`,{files:fileData})
+const ai=await axios.post(`${PYTHON_URL}/analyze-repo`,{
+files
+})
 
 res.json(ai.data)
 
 }catch(e){
 
 console.error(e)
-res.status(500).json({error:"Scan failed"})
+
+res.status(500).json({
+error:"Scan failed"
+})
 
 }
 
@@ -105,9 +111,7 @@ file_path:target_file,
 original_code:originalCode
 })
 
-const codeString=typeof aiFix.data.fixed_code==="string"
-?aiFix.data.fixed_code
-:JSON.stringify(aiFix.data.fixed_code,null,2)
+const fixedCode=aiFix.data.fixed_code
 
 const branch=`ai-fix-${Date.now()}`
 
@@ -130,7 +134,7 @@ owner,
 repo:repoName,
 path:target_file,
 message:`AI Fix for ${target_file}`,
-content:Buffer.from(codeString).toString("base64"),
+content:Buffer.from(fixedCode).toString("base64"),
 branch,
 sha:file.data.sha
 
@@ -143,7 +147,7 @@ repo:repoName,
 title:`AI Fix: ${target_file}`,
 head:branch,
 base:"main",
-body:`AI automatically fixed an issue in ${target_file}`
+body:`AI DevOps Agent generated fix for ${target_file}`
 
 })
 
@@ -152,10 +156,17 @@ res.json({pr_url:pr.data.html_url})
 }catch(e){
 
 console.error(e)
-res.status(500).json({error:"Fix failed"})
+
+res.status(500).json({
+error:"Fix failed"
+})
 
 }
 
 })
 
-app.listen(process.env.PORT||3000,()=>console.log("Server running"))
+app.listen(process.env.PORT||3000,()=>{
+
+console.log("Server running")
+
+})

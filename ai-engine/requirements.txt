@@ -5,3 +5,9 @@ pydantic
 python-multipart
 requests
 python-dotenv
+
+langchain
+langchain-community
+chromadb
+sentence-transformers
+tiktoken
