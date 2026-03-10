@@ -1,4 +1,5 @@
 import os
+import uvicorn
 import json
 import traceback
 from fastapi import FastAPI, HTTPException, Request
@@ -12,6 +13,9 @@ load_dotenv()
 
 app = FastAPI()
 
+# -----------------------------
+# CORS Configuration
+# -----------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,9 +23,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# -----------------------------
+# GROQ API Setup
+# -----------------------------
+api_key = os.getenv("GROQ_API_KEY")
 
+if not api_key:
+    raise RuntimeError("GROQ_API_KEY environment variable not set")
 
+client = Groq(api_key=api_key)
+
+# -----------------------------
+# Analyze Repository
+# -----------------------------
 @app.post("/analyze-repo")
 async def analyze_repo(request: Request):
 
@@ -30,8 +44,17 @@ async def analyze_repo(request: Request):
         data = await request.json()
         files = data.get("files", [])
 
+        if not files:
+            return {
+                "target_file": None,
+                "reason": "No files received from repository",
+                "action": "Check repository scanning step"
+            }
+
+        # Build vector database
         vectordb = index_repo(files)
 
+        # Search relevant code snippets
         relevant_code = search_code(
             vectordb,
             "find missing implementation TODO incomplete function bug logic error"
@@ -66,13 +89,25 @@ Return JSON:
             response_format={"type": "json_object"}
         )
 
-        return json.loads(chat.choices[0].message.content)
+        response = chat.choices[0].message.content
+
+        try:
+            return json.loads(response)
+        except Exception:
+            return {
+                "target_file": None,
+                "reason": "AI returned invalid JSON",
+                "action": response
+            }
 
     except Exception:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="AI analysis failed")
 
 
+# -----------------------------
+# Apply Fix
+# -----------------------------
 @app.post("/apply-fix")
 async def apply_fix(request: Request):
 
@@ -102,12 +137,22 @@ Return JSON:
             response_format={"type": "json_object"}
         )
 
-        return json.loads(chat.choices[0].message.content)
+        response = chat.choices[0].message.content
+
+        try:
+            return json.loads(response)
+        except Exception:
+            return {
+                "fixed_code": response
+            }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# -----------------------------
+# Pull Request Review
+# -----------------------------
 @app.post("/review-pr")
 async def review_pr(request: Request):
 
@@ -115,6 +160,12 @@ async def review_pr(request: Request):
 
         data = await request.json()
         diff = data.get("diff", "")
+
+        if not diff:
+            return {
+                "review_comment": "No diff provided",
+                "severity": "low"
+            }
 
         prompt = f"""
 You are a senior software engineer reviewing a Pull Request.
@@ -144,20 +195,29 @@ Return JSON:
             response_format={"type": "json_object"}
         )
 
-        return json.loads(chat.choices[0].message.content)
+        response = chat.choices[0].message.content
+
+        try:
+            return json.loads(response)
+        except Exception:
+            return {
+                "review_comment": response,
+                "severity": "unknown"
+            }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# -----------------------------
+# Run FastAPI Server
+# -----------------------------
 if __name__ == "__main__":
 
-    import uvicorn
-
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 10000))
 
     uvicorn.run(
-        app,
+        "main:app",
         host="0.0.0.0",
         port=port
     )
