@@ -1,46 +1,41 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
 
 def index_repo(files):
 
-    documents = []
+    docs = []
 
-    for f in files:
-
-        documents.append({
-            "path": f["path"],
-            "content": f["code"]
+    for file in files:
+        docs.append({
+            "content": file["code"],
+            "metadata": {"path": file["path"]}
         })
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=800,
+        chunk_overlap=100
     )
 
-    texts = []
-    metadatas = []
+    chunks = []
 
-    for doc in documents:
-
-        chunks = splitter.split_text(doc["content"])
-
-        for chunk in chunks:
-
-            texts.append(chunk)
-
-            metadatas.append({
-                "path": doc["path"]
+    for doc in docs:
+        parts = splitter.split_text(doc["content"])
+        for p in parts:
+            chunks.append({
+                "content": p,
+                "metadata": doc["metadata"]
             })
 
-    vectordb = Chroma.from_texts(
-        texts,
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    vectordb = FAISS.from_texts(
+        [c["content"] for c in chunks],
         embeddings,
-        metadatas=metadatas
+        metadatas=[c["metadata"] for c in chunks]
     )
 
     return vectordb
@@ -48,15 +43,14 @@ def index_repo(files):
 
 def search_code(vectordb, query):
 
-    results = vectordb.similarity_search(query, k=5)
+    results = vectordb.similarity_search(query, k=10)
 
-    context = []
+    snippets = []
 
     for r in results:
-
-        context.append({
-            "path": r.metadata["path"],
+        snippets.append({
+            "file": r.metadata["path"],
             "code": r.page_content
         })
 
-    return context
+    return snippets

@@ -1,13 +1,14 @@
 fastapi
 uvicorn
 groq
+python-dotenv
 pydantic
 python-multipart
 requests
-python-dotenv
 
 langchain
 langchain-community
-chromadb
+langchain-text-splitters
+
+faiss-cpu
 sentence-transformers
-tiktoken
