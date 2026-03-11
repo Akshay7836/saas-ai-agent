@@ -4,17 +4,21 @@ const {Octokit}=require("@octokit/core")
 const {createAppAuth}=require("@octokit/auth-app")
 const axios=require("axios")
 require("dotenv").config()
+const express = require("express")
+const bodyParser = require("body-parser")
+const path = require("path")
 
-const app=express()
+const app = express()
 
 app.use(bodyParser.json())
-app.use(express.static("frontend"))
-const path=require("path")
 
-app.get("/",(req,res)=>{
-res.sendFile(path.join(__dirname,"frontend","index.html"))
+// serve static files (index.html)
+app.use(express.static(__dirname))
+
+// root route
+app.get("/", (req,res)=>{
+res.sendFile(path.join(__dirname,"index.html"))
 })
-
 function getOctokit(installationId){
 
 return new Octokit({
