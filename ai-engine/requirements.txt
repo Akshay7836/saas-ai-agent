@@ -12,4 +12,3 @@ langchain-text-splitters
 
 faiss-cpu
 sentence-transformers
-python-3.11.9
