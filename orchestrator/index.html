@@ -1,42 +1,116 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>AI DevOps Agent</title>
+<title>DevOps AI Agent</title>
+
 <style>
-body{font-family:Arial;background:#0f172a;color:white;padding:40px}
-input,button{padding:10px;margin:5px}
-#log{margin-top:20px;background:#111;padding:15px;border-radius:8px}
+
+body{
+font-family:Arial;
+background:#0f172a;
+color:white;
+padding:40px;
+text-align:center;
+}
+
+.container{
+max-width:700px;
+margin:auto;
+background:#111827;
+padding:30px;
+border-radius:12px;
+}
+
+input{
+padding:12px;
+width:70%;
+border:none;
+border-radius:6px;
+margin:10px;
+}
+
+button{
+padding:12px 20px;
+border:none;
+border-radius:6px;
+cursor:pointer;
+margin:8px;
+font-weight:bold;
+}
+
+.connect{background:#6366f1;color:white}
+.scan{background:#22c55e;color:white}
+.fix{background:#f59e0b;color:white}
+
+#log{
+margin-top:20px;
+background:#020617;
+padding:20px;
+border-radius:8px;
+text-align:left;
+}
+
 </style>
 </head>
 
 <body>
 
+<div class="container">
+
 <h2>🤖 DevOps AI Agent</h2>
 
-<input id="repo" placeholder="username/repository">
-<button onclick="scan()">Scan Repo</button>
+<button class="connect" onclick="connectGithub()">Connect GitHub</button>
 
-<div id="log"></div>
+<br>
 
-<button id="fixBtn" onclick="applyFix()" style="display:none">
+<input id="repo" placeholder="owner/repository">
+
+<br>
+
+<button class="scan" onclick="scan()">Scan Repository</button>
+
+<div id="log">Waiting...</div>
+
+<button id="fixBtn" class="fix" onclick="applyFix()" style="display:none">
 Generate Fix PR
 </button>
 
+</div>
+
 <script>
 
-let installation_id = new URLSearchParams(window.location.search).get("installation_id")
-let targetFile = null
+let targetFile=null
+
+const params=new URLSearchParams(window.location.search)
+const install=params.get("installation_id")
+
+if(install){
+localStorage.setItem("installation_id",install)
+}
+
+function connectGithub(){
+
+window.location.href="https://github.com/apps/YOUR_APP_NAME/installations/new"
+
+}
+
+function getInstallation(){
+return localStorage.getItem("installation_id")
+}
 
 async function scan(){
 
-let repo=document.getElementById("repo").value
+const repo=document.getElementById("repo").value
+const installation_id=getInstallation()
 
-document.getElementById("log").innerHTML="Scanning repository..."
+document.getElementById("log").innerHTML="Scanning repo..."
 
 const res=await fetch("/scan",{
+
 method:"POST",
-headers:{'Content-Type':'application/json'},
+headers:{"Content-Type":"application/json"},
 body:JSON.stringify({repo,installation_id})
+
 })
 
 const data=await res.json()
@@ -44,36 +118,48 @@ const data=await res.json()
 targetFile=data.target_file
 
 document.getElementById("log").innerHTML=`
-Target File: ${data.target_file}<br>
-Reason: ${data.reason}<br>
+
+Target File: ${data.target_file}<br><br>
+
+Reason: ${data.reason}<br><br>
+
 Action: ${data.action}
+
 `
 
-document.getElementById("fixBtn").style.display="block"
+document.getElementById("fixBtn").style.display="inline-block"
 
 }
 
 async function applyFix(){
 
-let repo=document.getElementById("repo").value
+const repo=document.getElementById("repo").value
+const installation_id=getInstallation()
 
-document.getElementById("log").innerHTML="Applying fix..."
+document.getElementById("log").innerHTML="Creating PR..."
 
 const res=await fetch("/apply-fix",{
+
 method:"POST",
-headers:{'Content-Type':'application/json'},
+headers:{"Content-Type":"application/json"},
 body:JSON.stringify({
+
 repo,
 installation_id,
 target_file:targetFile
+
 })
+
 })
 
 const data=await res.json()
 
 document.getElementById("log").innerHTML=`
-Fix Created:<br>
+
+PR Created:<br>
+
 <a href="${data.pr_url}" target="_blank">${data.pr_url}</a>
+
 `
 
 }

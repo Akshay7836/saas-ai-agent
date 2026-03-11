@@ -1,14 +1,5 @@
 fastapi
 uvicorn
-groq
-python-dotenv
 pydantic
-python-multipart
-requests
-
-langchain
-langchain-community
-langchain-text-splitters
-
-faiss-cpu
-sentence-transformers
+groq
+chromadb
