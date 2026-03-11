@@ -9,10 +9,10 @@ const app=express()
 
 app.use(bodyParser.json())
 app.use(express.static("frontend"))
+const path=require("path")
 
-/* HEALTH ROUTE */
 app.get("/",(req,res)=>{
-res.send("DevOps AI Agent Server Running 🚀")
+res.sendFile(path.join(__dirname,"frontend","index.html"))
 })
 
 function getOctokit(installationId){
