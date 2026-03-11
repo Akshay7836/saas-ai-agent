@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>DevOps AI Agent</title>
+<title>AI DevOps Agent</title>
 
 <style>
 
@@ -14,28 +14,27 @@ text-align:center;
 }
 
 .container{
-max-width:700px;
+max-width:650px;
 margin:auto;
 background:#111827;
 padding:30px;
-border-radius:12px;
+border-radius:10px;
 }
 
 input{
-padding:12px;
+padding:10px;
 width:70%;
-border:none;
-border-radius:6px;
 margin:10px;
+border-radius:6px;
+border:none;
 }
 
 button{
-padding:12px 20px;
+padding:10px 18px;
+margin:8px;
 border:none;
 border-radius:6px;
 cursor:pointer;
-margin:8px;
-font-weight:bold;
 }
 
 .connect{background:#6366f1;color:white}
@@ -45,7 +44,7 @@ font-weight:bold;
 #log{
 margin-top:20px;
 background:#020617;
-padding:20px;
+padding:15px;
 border-radius:8px;
 text-align:left;
 }
@@ -67,7 +66,7 @@ text-align:left;
 
 <br>
 
-<button class="scan" onclick="scan()">Scan Repository</button>
+<button class="scan" onclick="scan()">Scan Repo</button>
 
 <div id="log">Waiting...</div>
 
@@ -88,14 +87,14 @@ if(install){
 localStorage.setItem("installation_id",install)
 }
 
+function getInstallation(){
+return localStorage.getItem("installation_id")
+}
+
 function connectGithub(){
 
 window.location.href="https://github.com/apps/YOUR_APP_NAME/installations/new"
 
-}
-
-function getInstallation(){
-return localStorage.getItem("installation_id")
 }
 
 async function scan(){
@@ -103,14 +102,12 @@ async function scan(){
 const repo=document.getElementById("repo").value
 const installation_id=getInstallation()
 
-document.getElementById("log").innerHTML="Scanning repo..."
+document.getElementById("log").innerHTML="Scanning repository..."
 
 const res=await fetch("/scan",{
-
 method:"POST",
 headers:{"Content-Type":"application/json"},
 body:JSON.stringify({repo,installation_id})
-
 })
 
 const data=await res.json()
@@ -118,13 +115,9 @@ const data=await res.json()
 targetFile=data.target_file
 
 document.getElementById("log").innerHTML=`
-
 Target File: ${data.target_file}<br><br>
-
 Reason: ${data.reason}<br><br>
-
 Action: ${data.action}
-
 `
 
 document.getElementById("fixBtn").style.display="inline-block"
@@ -139,27 +132,20 @@ const installation_id=getInstallation()
 document.getElementById("log").innerHTML="Creating PR..."
 
 const res=await fetch("/apply-fix",{
-
 method:"POST",
 headers:{"Content-Type":"application/json"},
 body:JSON.stringify({
-
 repo,
 installation_id,
 target_file:targetFile
-
 })
-
 })
 
 const data=await res.json()
 
 document.getElementById("log").innerHTML=`
-
 PR Created:<br>
-
 <a href="${data.pr_url}" target="_blank">${data.pr_url}</a>
-
 `
 
 }

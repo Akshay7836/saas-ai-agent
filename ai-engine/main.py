@@ -7,10 +7,14 @@ import os
 
 app = FastAPI()
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 chroma_client = chromadb.Client()
-collection = chroma_client.create_collection("repo")
+
+try:
+    collection = chroma_client.get_collection("repo_index")
+except:
+    collection = chroma_client.create_collection("repo_index")
 
 
 class RepoRequest(BaseModel):
@@ -20,12 +24,12 @@ class RepoRequest(BaseModel):
 
 @app.get("/")
 def health():
-    return {"status": "AI DevOps Engine running"}
+    return {"status": "AI Engine running"}
 
 
-def embed_code(file_name):
+def embed_text(text):
 
-    return [float(ord(c) % 10) for c in file_name][:10]
+    return [float(ord(c) % 10) for c in text][:10]
 
 
 @app.post("/analyze")
@@ -46,7 +50,7 @@ def analyze(req: RepoRequest):
 
         return {
             "target_file":"README.md",
-            "reason":"No code files",
+            "reason":"No code files detected",
             "action":"Add documentation"
         }
 
@@ -54,21 +58,19 @@ def analyze(req: RepoRequest):
 
         collection.add(
             documents=[file],
-            embeddings=[embed_code(file)],
-            ids=[str(i)]
+            embeddings=[embed_text(file)],
+            ids=[f"{req.repo}_{i}"]
         )
 
-    query_embedding=embed_code("bug")
-
     result=collection.query(
-        query_embeddings=[query_embedding],
+        query_embeddings=[embed_text("bug")],
         n_results=1
     )
 
     target=result["documents"][0][0]
 
     prompt=f"""
-You are a DevOps AI agent.
+You are a DevOps AI assistant.
 
 Analyze file:
 
@@ -76,30 +78,28 @@ Analyze file:
 
 Return:
 
-Reason
-Action
+Reason:
+Action:
 """
 
-    response=client.chat.completions.create(
+    response=groq_client.chat.completions.create(
 
         model="llama-3.1-70b-versatile",
 
-        messages=[
-            {"role":"user","content":prompt}
-        ]
+        messages=[{"role":"user","content":prompt}]
 
     )
 
     text=response.choices[0].message.content
 
-    reason="AI detected improvement"
+    reason="AI detected possible improvement"
     action="Refactor code"
 
-    if "Reason" in text:
-        reason=text.split("Reason")[1][:100]
+    if "Reason:" in text:
+        reason=text.split("Reason:")[1].split("\n")[0].strip()
 
-    if "Action" in text:
-        action=text.split("Action")[1][:100]
+    if "Action:" in text:
+        action=text.split("Action:")[1].strip()
 
     return {
         "target_file":target,

@@ -8,7 +8,7 @@ require("dotenv").config()
 const app=express()
 
 app.use(bodyParser.json())
-app.use(express.static("../frontend"))
+app.use(express.static("frontend"))
 
 function getOctokit(installationId){
 
@@ -51,12 +51,11 @@ files:files.data
 
 res.json(ai.data)
 
-}
-catch(e){
+}catch(err){
 
-console.log(e)
+console.log(err)
 
-res.status(500).json({error:"Scan failed"})
+res.status(500).json({error:"scan failed"})
 
 }
 
@@ -123,12 +122,11 @@ base:base
 
 res.json({pr_url:pr.data.html_url})
 
-}
-catch(e){
+}catch(err){
 
-console.log(e)
+console.log(err)
 
-res.status(500).json({error:"PR creation failed"})
+res.status(500).json({error:"PR failed"})
 
 }
 
@@ -137,7 +135,5 @@ res.status(500).json({error:"PR creation failed"})
 const PORT=process.env.PORT||3000
 
 app.listen(PORT,()=>{
-
-console.log("Orchestrator running")
-
+console.log("Server running")
 })
