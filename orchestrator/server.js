@@ -10,6 +10,11 @@ const app=express()
 app.use(bodyParser.json())
 app.use(express.static("frontend"))
 
+/* HEALTH ROUTE */
+app.get("/",(req,res)=>{
+res.send("DevOps AI Agent Server Running 🚀")
+})
+
 function getOctokit(installationId){
 
 return new Octokit({
@@ -31,6 +36,10 @@ app.post("/scan",async(req,res)=>{
 try{
 
 const {repo,installation_id}=req.body
+
+if(!repo || !installation_id){
+return res.status(400).json({error:"repo or installation_id missing"})
+}
 
 const [owner,repoName]=repo.split("/")
 
@@ -66,6 +75,10 @@ app.post("/apply-fix",async(req,res)=>{
 try{
 
 const {repo,installation_id,target_file}=req.body
+
+if(!repo || !installation_id || !target_file){
+return res.status(400).json({error:"missing parameters"})
+}
 
 const [owner,repoName]=repo.split("/")
 
@@ -135,5 +148,5 @@ res.status(500).json({error:"PR failed"})
 const PORT=process.env.PORT||3000
 
 app.listen(PORT,()=>{
-console.log("Server running")
+console.log("Server running on port "+PORT)
 })
