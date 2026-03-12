@@ -2,68 +2,102 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>SRE Minion</title>
+    <title>DevOps AI Agent</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background: #0f172a; color: white; padding: 50px; }
-        .card { background: #1e293b; border: none; border-radius: 15px; }
+        .card { background: #1e293b; border: none; border-radius: 12px; }
         .form-control { background: #0f172a; color: white; border: 1px solid #334155; }
-        .form-control:focus { background: #0f172a; color: white; box-shadow: none; border-color: #3b82f6; }
-        #log { background: #020617; padding: 15px; border-radius: 8px; font-family: monospace; border-left: 4px solid #3b82f6; }
+        .form-control:focus { background: #0f172a; color: white; box-shadow: none; border-color: #6366f1; }
+        #log { background: #020617; padding: 15px; border-radius: 8px; font-family: monospace; border-left: 4px solid #6366f1; font-size: 0.9rem; }
+        .d-none { display: none; }
     </style>
 </head>
 <body>
-    <div class="container" style="max-width: 550px;">
+    <div class="container" style="max-width: 500px;">
         <div class="card p-4 shadow-lg text-center">
             <h2 class="mb-4">🤖 DevOps AI Agent</h2>
-            <button class="btn btn-primary w-100 mb-3" onclick="location.href='https://github.com/apps/devops-ai-agent/installations/new'">1. Connect GitHub</button>
             
-            <div class="input-group mb-3">
-                <span class="input-group-text bg-secondary text-white border-0">github.com/</span>
-                <input id="repo" class="form-control" placeholder="username/repo">
+            <div id="step1">
+                <p class="text-muted small">Step 1: Link your GitHub Account</p>
+                <button class="btn btn-primary w-100 mb-3" onclick="connectGithub()">Connect GitHub</button>
             </div>
+            
+            <div id="step23" class="d-none">
+                <hr class="border-secondary my-4">
+                <p class="text-muted small">Step 2: Enter Repository Details</p>
+                <div class="input-group mb-3">
+                    <span class="input-group-text bg-secondary text-white border-0">github.com/</span>
+                    <input id="repo" class="form-control" placeholder="username/repository">
+                </div>
 
-            <button id="scanBtn" class="btn btn-success w-100 mb-3" onclick="scan()">2. Deep Scan</button>
-            <div id="log" class="d-none mb-3">Waiting for scan...</div>
-            <button id="fixBtn" class="btn btn-warning w-100 d-none" onclick="applyFix()">3. Deploy Autonomous Fix</button>
+                <button id="scanBtn" class="btn btn-success w-100 mb-3" onclick="scan()">Deep Scan Repo</button>
+                <div id="log" class="d-none mb-3 text-start"></div>
+                <button id="fixBtn" class="btn btn-warning w-100 d-none" onclick="applyFix()">Generate Fix PR</button>
+            </div>
         </div>
     </div>
 
     <script>
         let targetFile = null;
-        const instId = new URLSearchParams(window.location.search).get("installation_id") || localStorage.getItem("inst_id");
-        if(instId) localStorage.setItem("inst_id", instId);
+        // Check URL for installation_id
+        const params = new URLSearchParams(window.location.search);
+        const installId = params.get("installation_id") || localStorage.getItem("gh_inst_id");
+
+        if(installId) {
+            localStorage.setItem("gh_inst_id", installId);
+            document.getElementById("step1").classList.add("d-none");
+            document.getElementById("step23").classList.remove("d-none");
+        }
+
+        function connectGithub() {
+            // FIX: Replace 'devops-ai-agent' with your ACTUAL app slug from GitHub settings
+            window.location.href = "https://github.com/apps/devops-ai-agent/installations/new";
+        }
 
         async function scan() {
             const repo = document.getElementById("repo").value;
+            if(!repo.includes('/')) return alert("Please enter in 'username/repository' format");
+
             const log = document.getElementById("log");
             log.classList.remove('d-none');
-            log.innerText = "Analyzing repository structure...";
+            log.innerText = ">> Accessing GitHub Trees...\n>> AI Analyzing code...";
 
-            const res = await fetch("/scan", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ repo, installation_id: instId })
-            });
-            const data = await res.json();
-            targetFile = data.target_file;
-            log.innerHTML = `<b>Target:</b> ${data.target_file}<br><b>Reason:</b> ${data.reason}`;
-            document.getElementById("fixBtn").classList.remove('d-none');
+            try {
+                const res = await fetch("/scan", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ repo, installation_id: installId })
+                });
+                const data = await res.json();
+                targetFile = data.target_file;
+                log.innerHTML = `<b>Target:</b> ${data.target_file}<br><b>Reason:</b> ${data.reason}<br><b>Action:</b> ${data.action}`;
+                document.getElementById("fixBtn").classList.remove('d-none');
+            } catch (e) {
+                log.innerText = ">> Error: Scan failed. Check server logs.";
+            }
         }
 
         async function applyFix() {
             const repo = document.getElementById("repo").value;
             const fixBtn = document.getElementById("fixBtn");
             fixBtn.disabled = true;
-            fixBtn.innerText = "Generating Pull Request...";
+            fixBtn.innerText = "Creating Pull Request...";
 
-            const res = await fetch("/apply-fix", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ repo, installation_id: instId, target_file: targetFile })
-            });
-            const data = await res.json();
-            document.getElementById("log").innerHTML = `🎉 PR Created: <a href="${data.pr_url}" target="_blank" class="text-info">Click here to view</a>`;
+            try {
+                const res = await fetch("/apply-fix", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ repo, installation_id: installId, target_file: targetFile })
+                });
+                const data = await res.json();
+                document.getElementById("log").innerHTML = `🎉 <b>PR Created Successfully!</b><br><a href="${data.pr_url}" target="_blank" class="text-info">${data.pr_url}</a>`;
+            } catch (e) {
+                alert("Failed to create PR");
+            } finally {
+                fixBtn.disabled = false;
+                fixBtn.innerText = "Generate Fix PR";
+            }
         }
     </script>
 </body>
