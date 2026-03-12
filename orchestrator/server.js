@@ -9,12 +9,12 @@ const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// Environment Variables
+// ✅ Variable names matching your Render screenshots
 const APP_ID = process.env.GITHUB_APP_ID;
 const PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
-// 🛡️ URL FIX: Trim spaces and remove trailing slash to prevent "Invalid URL" error
-const rawAiUrl = process.env.AI_ENGINE_URL || "";
+// 🛡️ Changed from AI_ENGINE_URL to PYTHON_URL as per your config
+const rawAiUrl = process.env.PYTHON_URL || ""; 
 const AI_URL = rawAiUrl.replace(/\/$/, "").trim();
 
 function getOcto(installationId) {
@@ -33,9 +33,8 @@ app.post("/scan", async (req, res) => {
     try {
         const { repo, installation_id } = req.body;
         
-        // Validation Checks
         if (!repo || !installation_id) throw new Error("Credentials or Repo path missing");
-        if (!AI_URL) throw new Error("AI_ENGINE_URL is not configured on Render");
+        if (!AI_URL) throw new Error("PYTHON_URL is not configured on Render"); // Updated error message
         if (!repo.includes("/")) throw new Error("Invalid repo format. Must be 'owner/repo'");
 
         const [owner, repoName] = repo.split("/");
@@ -43,20 +42,17 @@ app.post("/scan", async (req, res) => {
 
         console.log(`>> Scanning: ${owner}/${repoName}`);
         
-        // Recursive tree fetch
         const { data: tree } = await octo.git.getTree({
             owner, repo: repoName, tree_sha: 'main', recursive: true
         });
 
         const files = tree.tree.filter(f => f.type === 'blob').map(f => f.path);
         
-        // 🚀 Calling AI Engine with full error tracking
-        console.log(`>> Connecting to AI: ${AI_URL}/analyze`);
+        console.log(`>> Connecting to AI at PYTHON_URL: ${AI_URL}/analyze`);
         const ai = await axios.post(`${AI_URL}/analyze`, { repo, files }, { timeout: 30000 });
         
         res.json(ai.data);
     } catch (err) {
-        // Detailed logging for Render logs
         console.error("❌ SCAN ERROR:", err.response?.data || err.message);
         res.status(500).json({ 
             error: err.message, 
@@ -73,27 +69,27 @@ app.post("/apply-fix", async (req, res) => {
         const [owner, repoName] = repo.split("/");
         const octo = getOcto(installation_id);
 
-        // 1. Get current content
+        // 1. Get current content and SHA
         const { data: fileData } = await octo.repos.getContent({ owner, repo: repoName, path: target_file });
         const originalCode = Buffer.from(fileData.content, 'base64').toString();
 
         // 2. Request fix from AI
-        console.log(`>> Fetching fix for: ${target_file}`);
+        console.log(`>> Fetching fix from PYTHON_URL for: ${target_file}`);
         const aiResponse = await axios.post(`${AI_URL}/get-fix`, { 
             file_path: target_file, 
             original_code: originalCode 
         });
 
-        // 3. Create branch and commit
+        // 3. Create branch
         const branch = `ai-fix-${Date.now()}`;
         const { data: main } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
         await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: main.object.sha });
 
-        // Ensure fixed_code is treated as string
         const fixedContent = typeof aiResponse.data.fixed_code === 'string' 
             ? aiResponse.data.fixed_code 
             : JSON.stringify(aiResponse.data.fixed_code, null, 2);
 
+        // 4. Update file with SHA to avoid 409 Conflict
         await octo.repos.createOrUpdateFileContents({
             owner, repo: repoName, path: target_file,
             message: "🤖 AI SRE Fix",
@@ -102,7 +98,7 @@ app.post("/apply-fix", async (req, res) => {
             sha: fileData.sha
         });
 
-        // 4. Create Pull Request
+        // 5. Create Pull Request
         const pr = await octo.pulls.create({
             owner, repo: repoName, title: `🛡️ AI Fix: ${target_file}`,
             head: branch, base: 'main', 
