@@ -9,18 +9,12 @@ const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// ✅ Variable names matching your Render screenshots
 const APP_ID = process.env.GITHUB_APP_ID;
 const PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-// 🛡️ Changed from AI_ENGINE_URL to PYTHON_URL as per your config
-const rawAiUrl = process.env.PYTHON_URL || ""; 
-const AI_URL = rawAiUrl.replace(/\/$/, "").trim();
+const AI_URL = process.env.PYTHON_URL?.replace(/\/$/, "").trim();
 
 function getOcto(installationId) {
-    if (!APP_ID || !PRIVATE_KEY) {
-        throw new Error("GITHUB_APP_ID or GITHUB_PRIVATE_KEY is missing in env");
-    }
+    if (!APP_ID || !PRIVATE_KEY) throw new Error("GitHub App credentials missing in Environment Variables");
     return new Octokit({
         authStrategy: createAppAuth,
         auth: { appId: APP_ID, privateKey: PRIVATE_KEY, installationId }
@@ -32,77 +26,62 @@ app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
 app.post("/scan", async (req, res) => {
     try {
         const { repo, installation_id } = req.body;
-        
-        if (!repo || !installation_id) throw new Error("Credentials or Repo path missing");
-        if (!AI_URL) throw new Error("PYTHON_URL is not configured on Render"); // Updated error message
-        if (!repo.includes("/")) throw new Error("Invalid repo format. Must be 'owner/repo'");
+        if (!repo || !installation_id) return res.status(400).json({ error: "Missing repo or installation_id" });
+        if (!AI_URL) return res.status(500).json({ error: "PYTHON_URL not configured" });
 
         const [owner, repoName] = repo.split("/");
         const octo = getOcto(installation_id);
 
-        console.log(`>> Scanning: ${owner}/${repoName}`);
-        
         const { data: tree } = await octo.git.getTree({
             owner, repo: repoName, tree_sha: 'main', recursive: true
         });
 
         const files = tree.tree.filter(f => f.type === 'blob').map(f => f.path);
-        
-        console.log(`>> Connecting to AI at PYTHON_URL: ${AI_URL}/analyze`);
-        const ai = await axios.post(`${AI_URL}/analyze`, { repo, files }, { timeout: 30000 });
+        const ai = await axios.post(`${AI_URL}/analyze`, { repo, files }, { timeout: 20000 });
         
         res.json(ai.data);
     } catch (err) {
-        console.error("❌ SCAN ERROR:", err.response?.data || err.message);
-        res.status(500).json({ 
-            error: err.message, 
-            details: err.response?.data || "Check AI Engine status" 
-        });
+        console.error("❌ SCAN ERROR:", err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
 app.post("/apply-fix", async (req, res) => {
     try {
         const { repo, installation_id, target_file } = req.body;
-        if (!target_file) throw new Error("No target file provided for fix");
+        if (!target_file || target_file === "undefined") throw new Error("Invalid target file. Please scan again.");
 
         const [owner, repoName] = repo.split("/");
         const octo = getOcto(installation_id);
 
-        // 1. Get current content and SHA
+        // 1. Get SHA & Original Content (Prevents 409 Conflict)
         const { data: fileData } = await octo.repos.getContent({ owner, repo: repoName, path: target_file });
         const originalCode = Buffer.from(fileData.content, 'base64').toString();
 
-        // 2. Request fix from AI
-        console.log(`>> Fetching fix from PYTHON_URL for: ${target_file}`);
-        const aiResponse = await axios.post(`${AI_URL}/get-fix`, { 
-            file_path: target_file, 
-            original_code: originalCode 
-        });
+        // 2. Get AI Fix from Python Engine
+        const aiResponse = await axios.post(`${AI_URL}/get-fix`, { file_path: target_file, original_code: originalCode });
+        if (!aiResponse.data.fixed_code) throw new Error("AI Engine failed to return fixed_code");
 
-        // 3. Create branch
-        const branch = `ai-fix-${Date.now()}`;
-        const { data: main } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
-        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: main.object.sha });
+        // 3. Create Unique Branch
+        const branchName = `minion-fix-${Date.now()}`;
+        const { data: mainRef } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
+        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branchName}`, sha: mainRef.object.sha });
 
-        const fixedContent = typeof aiResponse.data.fixed_code === 'string' 
-            ? aiResponse.data.fixed_code 
-            : JSON.stringify(aiResponse.data.fixed_code, null, 2);
-
-        // 4. Update file with SHA to avoid 409 Conflict
+        // 4. Update File using SHA
         await octo.repos.createOrUpdateFileContents({
             owner, repo: repoName, path: target_file,
-            message: "🤖 AI SRE Fix",
-            content: Buffer.from(fixedContent).toString("base64"),
-            branch, 
-            sha: fileData.sha
+            message: `🛡️ Minion SRE: Optimized ${target_file}`,
+            content: Buffer.from(aiResponse.data.fixed_code).toString("base64"),
+            branch: branchName, 
+            sha: fileData.sha 
         });
 
         // 5. Create Pull Request
         const pr = await octo.pulls.create({
-            owner, repo: repoName, title: `🛡️ AI Fix: ${target_file}`,
-            head: branch, base: 'main', 
-            body: "Automated fix generated by Minion SRE. Review the code changes before merging."
+            owner, repo: repoName, 
+            title: `🛡️ AI SRE Fix: ${target_file}`,
+            head: branchName, base: 'main', 
+            body: "This is an automated fix generated by Minion SRE Agent. Please review and merge."
         });
 
         res.json({ pr_url: pr.data.html_url });
@@ -113,4 +92,4 @@ app.post("/apply-fix", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Orchestrator running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Orchestrator active on port ${PORT}`));

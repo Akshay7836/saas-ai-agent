@@ -1,15 +1,12 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from groq import Groq
 import os
 import json
 
 app = FastAPI()
-
-# Check for API Key
-GROQ_KEY = os.environ.get("GROQ_API_KEY")
-client = Groq(api_key=GROQ_KEY)
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 class RepoRequest(BaseModel):
     repo: str
@@ -21,64 +18,44 @@ class FixRequest(BaseModel):
 
 @app.post("/analyze")
 def analyze(req: RepoRequest):
-    # DevOps relevant files filter karein
-    code_files = [f for f in req.files if f.endswith(('.py', '.js', '.ts', '.go', '.yml', '.yaml', 'Dockerfile'))]
-    target = code_files[0] if code_files else "README.md"
+    # Filter for DevOps/Config files first
+    priority_files = [f for f in req.files if f.endswith(('.yml', '.yaml', 'Dockerfile', '.py', '.js'))]
+    target = priority_files[0] if priority_files else req.files[0]
 
-    # AI ko context de rahe hain ki wo kyun analyze kar raha hai
     prompt = (
-        f"Analyze the file '{target}' for SRE/DevOps best practices, security, and performance. "
-        f"Identify one major improvement. Reply ONLY in JSON format: "
-        f"{{\"reason\": \"short explanation\", \"action\": \"what to fix\"}}"
+        f"Analyze '{target}' for SRE/DevOps best practices. "
+        "Identify one critical improvement. Output ONLY JSON: "
+        "{\"target_file\": \"...\", \"reason\": \"...\", \"action\": \"...\"}"
     )
     
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": "You are a world-class SRE Engineer. Output only JSON."},
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "system", "content": "You are a world-class SRE. Output only JSON."},
+                  {"role": "user", "content": prompt}],
         response_format={"type": "json_object"}
     )
     
-    ai_data = json.loads(response.choices[0].message.content)
-    return {
-        "target_file": target,
-        "reason": ai_data.get("reason", "Potential performance bottleneck detected."),
-        "action": ai_data.get("action", "Optimize code structure")
-    }
+    return json.loads(response.choices[0].message.content)
 
 @app.post("/get-fix")
 def get_fix(req: FixRequest):
-    # ⚠️ CRITICAL: Strict prompt to return FULL code, not just snippets
     prompt = (
-        f"Fix the following code for file '{req.file_path}'. "
-        "Instructions: Fix all bugs, improve performance, and ensure it follows SRE best practices. "
-        "IMPORTANT: Return the FULL corrected file content. Do not skip any part of the code. "
-        "Return ONLY a JSON object with a single key 'fixed_code' containing the string of the new code."
+        f"Fix the file '{req.file_path}'. Improve performance and safety. "
+        "Return the ENTIRE source code corrected. "
+        "Return ONLY a JSON object with the key 'fixed_code'."
         f"\n\nOriginal Code:\n{req.original_code}"
     )
     
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": "You are a code-generator. You return the full source code for a file without any markdown or explanation."},
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "system", "content": "You are a code-generator. Output only JSON."},
+                  {"role": "user", "content": prompt}],
         response_format={"type": "json_object"}
     )
     
-    # AI se aane wala JSON parse karein
-    fix_data = json.loads(response.choices[0].message.content)
-    
-    # Safety Check: Agar AI ne galat key di ho toh handle karein
-    if "fixed_code" not in fix_data:
-        return {"fixed_code": req.original_code}
-        
-    return fix_data
+    return json.loads(response.choices[0].message.content)
 
 if __name__ == "__main__":
     import uvicorn
-    # Render usually provides the PORT env var
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
