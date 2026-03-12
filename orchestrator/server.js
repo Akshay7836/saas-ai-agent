@@ -1,154 +1,96 @@
-const express = require("express")
-const bodyParser = require("body-parser")
-const path = require("path")
-const {Octokit}=require("@octokit/core")
-const {createAppAuth}=require("@octokit/auth-app")
-const axios=require("axios")
-require("dotenv").config()
+const express = require("express");
+const path = require("path");
+const { Octokit } = require("@octokit/rest"); // Better for production
+const { createAppAuth } = require("@octokit/auth-app");
+const axios = require("axios");
+require("dotenv").config();
 
-const app = express()
+const app = express();
+app.use(express.json());
+app.use(express.static(__dirname));
 
-app.use(bodyParser.json())
+const APP_ID = process.env.GITHUB_APP_ID;
+const PRIVATE_KEY = process.env.GITHUB_PRIVATE_KEY?.replace(/\\n/g, '\n');
+const AI_URL = process.env.AI_ENGINE_URL?.replace(/\/$/, "");
 
-// serve static files (index.html)
-app.use(express.static(__dirname))
-
-// root route
-app.get("/", (req,res)=>{
-res.sendFile(path.join(__dirname,"index.html"))
-})
-function getOctokit(installationId){
-
-return new Octokit({
-
-authStrategy:createAppAuth,
-
-auth:{
-appId:process.env.GITHUB_APP_ID,
-privateKey:process.env.GITHUB_PRIVATE_KEY,
-installationId:installationId
+function getOctokit(installationId) {
+    return new Octokit({
+        authStrategy: createAppAuth,
+        auth: { appId: APP_ID, privateKey: PRIVATE_KEY, installationId }
+    });
 }
 
-})
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "index.html")));
 
-}
+app.post("/scan", async (req, res) => {
+    try {
+        const { repo, installation_id } = req.body;
+        const [owner, repoName] = repo.split("/");
+        const octo = getOctokit(installation_id);
 
-app.post("/scan",async(req,res)=>{
+        // Recursive scan for all files in all folders
+        const { data: tree } = await octo.git.getTree({
+            owner, repo: repoName, tree_sha: 'main', recursive: true
+        });
 
-try{
+        const files = tree.tree
+            .filter(f => f.type === 'blob')
+            .map(f => f.path);
 
-const {repo,installation_id}=req.body
+        const ai = await axios.post(`${AI_URL}/analyze`, { repo, files });
+        res.json(ai.data);
+    } catch (err) {
+        console.error(err.response?.data || err.message);
+        res.status(500).json({ error: "Scan failed. Check AI Engine URL." });
+    }
+});
 
-if(!repo || !installation_id){
-return res.status(400).json({error:"repo or installation_id missing"})
-}
+app.post("/apply-fix", async (req, res) => {
+    try {
+        const { repo, installation_id, target_file } = req.body;
+        const [owner, repoName] = repo.split("/");
+        const octo = getOctokit(installation_id);
 
-const [owner,repoName]=repo.split("/")
+        // 1. Get current file content and SHA
+        const { data: fileData } = await octo.repos.getContent({ owner, repo: repoName, path: target_file });
+        const originalCode = Buffer.from(fileData.content, 'base64').toString();
 
-const octokit=getOctokit(installation_id)
+        // 2. Get fixed code from AI
+        const aiResponse = await axios.post(`${AI_URL}/get-fix`, { 
+            file_path: target_file, 
+            original_code: originalCode 
+        });
+        
+        const fixedCode = typeof aiResponse.data.fixed_code === 'string' 
+            ? aiResponse.data.fixed_code 
+            : JSON.stringify(aiResponse.data.fixed_code);
 
-const files=await octokit.request(
-"GET /repos/{owner}/{repo}/contents",
-{owner:owner,repo:repoName}
-)
+        // 3. Create Branch
+        const branch = `ai-fix-${Date.now()}`;
+        const { data: mainRef } = await octo.git.getRef({ owner, repo: repoName, ref: 'heads/main' });
+        await octo.git.createRef({ owner, repo: repoName, ref: `refs/heads/${branch}`, sha: mainRef.object.sha });
 
-const ai=await axios.post(
-process.env.AI_ENGINE_URL+"/analyze",
-{
-repo:repo,
-files:files.data
-}
-)
+        // 4. Push Fix
+        await octo.repos.createOrUpdateFileContents({
+            owner, repo: repoName, path: target_file,
+            message: `🤖 AI Fix: ${target_file}`,
+            content: Buffer.from(fixedCode).toString("base64"),
+            branch,
+            sha: fileData.sha
+        });
 
-res.json(ai.data)
+        // 5. Create PR
+        const pr = await octo.pulls.create({
+            owner, repo: repoName, title: `🛡️ Minion Fix: ${target_file}`,
+            head: branch, base: 'main',
+            body: "AI identified and resolved an issue in this file."
+        });
 
-}catch(err){
+        res.json({ pr_url: pr.data.html_url });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to apply fix." });
+    }
+});
 
-console.log(err)
-
-res.status(500).json({error:"scan failed"})
-
-}
-
-})
-
-app.post("/apply-fix",async(req,res)=>{
-
-try{
-
-const {repo,installation_id,target_file}=req.body
-
-if(!repo || !installation_id || !target_file){
-return res.status(400).json({error:"missing parameters"})
-}
-
-const [owner,repoName]=repo.split("/")
-
-const octokit=getOctokit(installation_id)
-
-const repoInfo=await octokit.request(
-"GET /repos/{owner}/{repo}",
-{owner:owner,repo:repoName}
-)
-
-const base=repoInfo.data.default_branch
-
-const ref=await octokit.request(
-"GET /repos/{owner}/{repo}/git/ref/heads/{branch}",
-{owner:owner,repo:repoName,branch:base}
-)
-
-const sha=ref.data.object.sha
-
-const branch="ai-fix-"+Date.now()
-
-await octokit.request(
-"POST /repos/{owner}/{repo}/git/refs",
-{
-owner:owner,
-repo:repoName,
-ref:"refs/heads/"+branch,
-sha:sha
-}
-)
-
-await octokit.request(
-"PUT /repos/{owner}/{repo}/contents/{path}",
-{
-owner:owner,
-repo:repoName,
-path:target_file,
-message:"AI DevOps Fix",
-content:Buffer.from("//AI Fix\n").toString("base64"),
-branch:branch
-}
-)
-
-const pr=await octokit.request(
-"POST /repos/{owner}/{repo}/pulls",
-{
-owner:owner,
-repo:repoName,
-title:"AI DevOps Fix",
-head:branch,
-base:base
-}
-)
-
-res.json({pr_url:pr.data.html_url})
-
-}catch(err){
-
-console.log(err)
-
-res.status(500).json({error:"PR failed"})
-
-}
-
-})
-
-const PORT=process.env.PORT||3000
-
-app.listen(PORT,()=>{
-console.log("Server running on port "+PORT)
-})
+app.listen(process.env.PORT || 3000);

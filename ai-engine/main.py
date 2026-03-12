@@ -1,108 +1,55 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Optional
 from groq import Groq
-import chromadb
 import os
 
 app = FastAPI()
-
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-chroma_client = chromadb.Client()
-
-try:
-    collection = chroma_client.get_collection("repo_index")
-except:
-    collection = chroma_client.create_collection("repo_index")
-
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 class RepoRequest(BaseModel):
     repo: str
-    files: List[Dict]
+    files: List[str]
 
-
-@app.get("/")
-def health():
-    return {"status": "AI Engine running"}
-
-
-def embed_text(text):
-
-    return [float(ord(c) % 10) for c in text][:10]
-
+class FixRequest(BaseModel):
+    file_path: str
+    original_code: str
 
 @app.post("/analyze")
 def analyze(req: RepoRequest):
+    # Filter code files
+    code_files = [f for f in req.files if f.endswith(('.py', '.js', '.ts', '.go'))]
+    target = code_files[0] if code_files else "README.md"
 
-    files=req.files
-
-    code_files=[]
-
-    for f in files:
-
-        name=f.get("name","")
-
-        if name.endswith((".py",".js",".ts",".java",".go",".cpp")):
-            code_files.append(name)
-
-    if not code_files:
-
-        return {
-            "target_file":"README.md",
-            "reason":"No code files detected",
-            "action":"Add documentation"
-        }
-
-    for i,file in enumerate(code_files):
-
-        collection.add(
-            documents=[file],
-            embeddings=[embed_text(file)],
-            ids=[f"{req.repo}_{i}"]
-        )
-
-    result=collection.query(
-        query_embeddings=[embed_text("bug")],
-        n_results=1
+    prompt = f"Analyze this filename: {target}. Why might this file need a DevOps/SRE review? Reply in JSON: {{'reason': '...', 'action': '...'}}"
+    
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"}
     )
-
-    target=result["documents"][0][0]
-
-    prompt=f"""
-You are a DevOps AI assistant.
-
-Analyze file:
-
-{target}
-
-Return:
-
-Reason:
-Action:
-"""
-
-    response=groq_client.chat.completions.create(
-
-        model="llama-3.1-70b-versatile",
-
-        messages=[{"role":"user","content":prompt}]
-
-    )
-
-    text=response.choices[0].message.content
-
-    reason="AI detected possible improvement"
-    action="Refactor code"
-
-    if "Reason:" in text:
-        reason=text.split("Reason:")[1].split("\n")[0].strip()
-
-    if "Action:" in text:
-        action=text.split("Action:")[1].strip()
-
+    
+    import json
+    ai_data = json.loads(response.choices[0].message.content)
     return {
-        "target_file":target,
-        "reason":reason,
-        "action":action
+        "target_file": target,
+        "reason": ai_data.get("reason", "Code smells detected"),
+        "action": ai_data.get("action", "Refactor")
     }
+
+@app.post("/get-fix")
+def get_fix(req: FixRequest):
+    prompt = f"Fix the following code for file {req.file_path}. Improve performance and safety. Return ONLY the code in JSON field 'fixed_code'.\n\nCode:\n{req.original_code}"
+    
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"}
+    )
+    
+    import json
+    return json.loads(response.choices[0].message.content)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
